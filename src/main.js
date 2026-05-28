@@ -183,11 +183,18 @@ function detectGesture(lm) {
   const cr = curled(13, 16);  // ring
   const cp = curled(17, 20);  // pinky
 
-  if ( ci &&  cm &&  cr &&  cp) return 'GRAB';
-  if (!ci && !cm && !cr && !cp) return 'OPEN';
-  if (!ci &&  cm &&  cr &&  cp) return 'POINT';
-  if (!ci && !cm &&  cr &&  cp) return 'PEACE';
-  return null; // transitional pose — don't spam robot with ambiguous state
+  // Specific gestures FIRST — before GRAB, otherwise "index out + 3 curled"
+  // would match GRAB (>=3) before we ever reach POINT.
+  if (!ci &&  cm &&  cr &&  cp) return 'POINT';  // only index extended
+  if (!ci && !cm &&  cr &&  cp) return 'PEACE';  // index + middle extended (V sign)
+
+  const curledCount = [ci, cm, cr, cp].filter(Boolean).length;
+  // GRAB: original used >= 3 — tolerates one stiff/partially-curled finger.
+  if (curledCount >= 3) return 'GRAB';
+  // OPEN: allow one slightly-bent finger (curledCount <= 1)
+  if (curledCount <= 1) return 'OPEN';
+
+  return null; // transitional / unrecognised pose
 }
 
 // ─── Three.js setup ──────────────────────────────────────────────────────────
@@ -354,8 +361,10 @@ function onHandResults(results) {
   const lmX = (nx) => isMirrored ? ox + (1 - nx) * dw : ox + nx * dw;
   const lmY = (ny) => oy + ny * dh;
 
+  // 2-D skeleton colours — each gesture gets its own colour
+  const boneColor = GESTURE_COLOR[gesture] ?? '#00ff88';
   ctx.lineWidth   = 2;
-  ctx.strokeStyle = isGrab ? '#ff4444' : '#00ff88';
+  ctx.strokeStyle = boneColor;
 
   CONNECTIONS.forEach(([a, b]) => {
     ctx.beginPath();
@@ -365,10 +374,9 @@ function onHandResults(results) {
   });
 
   lm.forEach((pt, i) => {
-    const r  = TIPS.has(i) ? 7 : 4;
-    ctx.fillStyle = TIPS.has(i)
-      ? (isGrab ? '#ff4444' : '#ffff00')
-      : (isGrab ? '#ff8888' : '#00ff88');
+    const r = TIPS.has(i) ? 7 : 4;
+    // Tips take the gesture colour; non-tips slightly dimmer
+    ctx.fillStyle = TIPS.has(i) ? boneColor : (isGrab ? '#ff8888' : '#00cc66');
     ctx.beginPath();
     ctx.arc(lmX(pt.x), lmY(pt.y), r, 0, Math.PI * 2);
     ctx.fill();
