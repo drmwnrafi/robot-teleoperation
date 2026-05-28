@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3D Hand Tracker — Robot Control</title>
+
+  <!-- MediaPipe from CDN (globals: Hands, Camera, HAND_CONNECTIONS) -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #0d1117;
+      color: #00ff88;
+      font-family: 'Consolas', 'Monaco', monospace;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Header ────────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 16px;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      flex-shrink: 0;
+      gap: 12px;
+    }
+    header h1 {
+      font-size: 13px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: #00ff88;
+    }
+    #status-badge {
+      font-size: 11px;
+      color: #8b949e;
+      flex: 1;
+    }
+    #gesture-badge {
+      background: #ff4444;
+      color: #fff;
+      padding: 3px 14px;
+      border-radius: 3px;
+      font-size: 12px;
+      font-weight: bold;
+      letter-spacing: 2px;
+      display: none;
+    }
+    #gesture-badge.active { display: block; }
+
+    /* ── Source toggle ─────────────────────────────── */
+    .src-btn {
+      background: #21262d;
+      border: 1px solid #30363d;
+      color: #8b949e;
+      font-family: inherit;
+      font-size: 11px;
+      padding: 3px 10px;
+      border-radius: 3px;
+      cursor: pointer;
+      letter-spacing: 0.5px;
+      transition: background 0.15s, color 0.15s;
+    }
+    .src-btn:hover { background: #30363d; color: #e6edf3; }
+    .src-btn.active { background: #00ff88; color: #0d1117; border-color: #00ff88; }
+    #file-input { /* hidden via inline style; kept in DOM for label binding */ }
+
+    /* ── Video controls bar ────────────────────────── */
+    #video-controls {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      padding: 4px 14px;
+      background: #161b22;
+      border-bottom: 1px solid #30363d;
+      flex-shrink: 0;
+    }
+    #video-controls.visible { display: flex; }
+    #btn-playpause {
+      background: none;
+      border: 1px solid #30363d;
+      color: #00ff88;
+      font-size: 14px;
+      width: 28px;
+      height: 22px;
+      border-radius: 3px;
+      cursor: pointer;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    #btn-playpause:hover { background: #21262d; }
+    #seek {
+      flex: 1;
+      accent-color: #00ff88;
+      cursor: pointer;
+      height: 4px;
+    }
+    #time-display {
+      font-size: 10px;
+      color: #8b949e;
+      white-space: nowrap;
+      min-width: 80px;
+      text-align: right;
+    }
+    #speed-select {
+      background: #21262d;
+      border: 1px solid #30363d;
+      color: #8b949e;
+      font-family: inherit;
+      font-size: 10px;
+      padding: 1px 4px;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+
+    /* ── Main panels ───────────────────────────────── */
+    #main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    /* Camera + 2-D overlay */
+    #cam-panel {
+      flex: 1;
+      position: relative;
+      background: #000;
+      overflow: hidden;
+    }
+    #video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1); /* mirror for camera; toggled off for video files */
+    }
+    #video.no-mirror { transform: none; }
+    #overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    /* Three.js 3-D view */
+    #three-panel {
+      width: 44%;
+      flex-shrink: 0;
+      background: #0d1117;
+      border-left: 1px solid #30363d;
+      position: relative;
+    }
+    #three-panel canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+    }
+    #three-label {
+      position: absolute;
+      top: 6px;
+      left: 10px;
+      font-size: 10px;
+      color: #30363d;
+      pointer-events: none;
+      letter-spacing: 1px;
+    }
+
+    /* ── Coordinates panel ─────────────────────────── */
+    #coords-panel {
+      height: 128px;
+      flex-shrink: 0;
+      background: #161b22;
+      border-top: 1px solid #30363d;
+      display: flex;
+      overflow-x: auto;
+      overflow-y: hidden;
+      align-items: stretch;
+      scrollbar-width: thin;
+      scrollbar-color: #30363d #161b22;
+    }
+    #coords-panel::-webkit-scrollbar { height: 4px; }
+    #coords-panel::-webkit-scrollbar-thumb { background: #30363d; border-radius: 2px; }
+
+    .coord-col {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 6px 10px;
+      border-right: 1px solid #21262d;
+      min-width: 90px;
+      gap: 2px;
+      flex-shrink: 0;
+    }
+    .coord-col.key-joint {
+      background: #1c2128;
+    }
+    .coord-col .jname {
+      font-size: 8px;
+      color: #8b949e;
+      letter-spacing: 0.5px;
+      white-space: nowrap;
+    }
+    .coord-col .axis {
+      font-size: 10px;
+      color: #58a6ff;
+    }
+    .coord-col .axis b { color: #00ff88; }
+    .no-hand {
+      color: #8b949e;
+      font-size: 12px;
+      padding: 12px 16px;
+      align-self: center;
+    }
+
+    /* ── Calibration bar ───────────────────────────── */
+    #calib-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 14px;
+      background: #0d1117;
+      border-bottom: 1px solid #30363d;
+      flex-shrink: 0;
+      font-size: 11px;
+    }
+    .calib-label { color: #8b949e; white-space: nowrap; }
+    .calib-unit  { color: #444d56; }
+    .calib-sep   { color: #30363d; }
+    .calib-value { color: #00ff88; font-weight: bold; min-width: 44px; display: inline-block; }
+    #calib-bar input[type=number] {
+      width: 52px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      color: #e6edf3;
+      font-family: inherit;
+      font-size: 11px;
+      padding: 2px 5px;
+      border-radius: 3px;
+      text-align: right;
+    }
+    #calib-bar input[type=number]:focus { outline: 1px solid #00ff88; }
+    .calib-note { color: #444d56; font-size: 10px; margin-left: 8px; }
+    #robot-out {
+      font-size: 10px;
+      color: #30363d;
+      background: #0a0d11;
+      border: 1px solid #21262d;
+      border-radius: 3px;
+      padding: 2px 8px;
+      max-width: 360px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+      cursor: default;
+    }
+
+    /* ── WebSocket status ─────────────────────────── */
+    #ws-url-input {
+      width: 160px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      color: #e6edf3;
+      font-family: inherit;
+      font-size: 10px;
+      padding: 2px 5px;
+      border-radius: 3px;
+    }
+    #ws-url-input:focus { outline: 1px solid #00ff88; }
+    .ws-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #30363d;
+      flex-shrink: 0;
+      transition: background 0.2s;
+    }
+    .ws-dot.connecting { background: #f0b429; }
+    .ws-dot.connected  { background: #00ff88; }
+    .ws-dot.error      { background: #ff4444; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>3D Hand Tracker</h1>
+    <span id="status-badge">Requesting camera…</span>
+    <div style="display:flex;gap:6px;flex-shrink:0;">
+      <button class="src-btn active" id="btn-camera">📷 Camera</button>
+      <label  class="src-btn"        id="btn-video" for="file-input">📁 Video</label>
+      <input type="file" id="file-input" accept="video/*" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden;" />
+    </div>
+    <div id="gesture-badge"></div>
+  </header>
+
+  <!-- Metric calibration bar -->
+  <div id="calib-bar">
+    <span class="calib-label">Hand size:</span>
+    <input id="hand-size-input" type="number" step="0.5" min="4" max="20" value="9" title="Wrist → Middle-MCP physical distance cm (avg adult ≈ 9 cm)" />
+    <span class="calib-unit">cm</span>
+    <span class="calib-sep">|</span>
+    <span class="calib-label">Cam FOV:</span>
+    <input id="fov-input" type="number" step="1" min="30" max="120" value="62" title="Camera horizontal field-of-view in degrees (webcam ≈ 62°)" />
+    <span class="calib-unit">°</span>
+    <span class="calib-sep">|</span>
+    <span class="calib-label">Depth:</span>
+    <span id="depth-display" class="calib-value">—</span>
+    <span class="calib-unit">cm</span>
+    <span class="calib-sep">|</span>
+    <span id="robot-out" title="Live robot JSON (window.__handRobotData)">waiting…</span>
+    <span class="calib-sep">|</span>
+    <span class="calib-label">WS:</span>
+    <input id="ws-url-input" type="text" placeholder="ws://localhost:8765" title="WebSocket server URL for robot bridge" />
+    <button id="btn-ws" class="src-btn">Connect</button>
+    <span id="ws-status" class="ws-dot" title="Disconnected"></span>
+  </div>
+
+  <div id="video-controls">
+    <button id="btn-playpause">▶</button>
+    <input type="range" id="seek" min="0" step="0.01" value="0" />
+    <span id="time-display">0:00 / 0:00</span>
+    <select id="speed-select">
+      <option value="0.25">0.25×</option>
+      <option value="0.5">0.5×</option>
+      <option value="1" selected>1×</option>
+      <option value="2">2×</option>
+    </select>
+  </div>
+
+  <div id="main">
+    <div id="cam-panel">
+      <video id="video" playsinline autoplay muted></video>
+      <canvas id="overlay"></canvas>
+    </div>
+
+    <div id="three-panel">
+      <span id="three-label">3D VIEW (cm)</span>
+      <!-- renderer canvas injected here by Three.js -->
+    </div>
+  </div>
+
+  <div id="coords-panel">
+    <span class="no-hand">No hand detected</span>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
