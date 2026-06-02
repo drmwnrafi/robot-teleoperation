@@ -1,10 +1,10 @@
 # 3D Hand Tracker — Robot Teleoperation
 
-Real-time hand tracking in the browser that streams 3D joint coordinates to a robot via WebSocket. Uses [MediaPipe Hands](https://mediapipe.dev) for landmark detection, [Three.js](https://threejs.org) for 3D visualization, and a built-in WebSocket client for robot integration.
+Real-time **dual-hand** tracking in the browser that streams 3D joint coordinates to a robot via WebSocket. Uses [MediaPipe Hands](https://mediapipe.dev) for landmark detection, [Three.js](https://threejs.org) for true 3D visualization, and a built-in WebSocket client for robot integration.
 
 ```
-Camera → MediaPipe (21 landmarks) → Gesture detection → WebSocket → Your robot
-                                   ↘ Three.js 3D view
+Camera → MediaPipe (2× 21 landmarks) → Gesture detection → WebSocket → Your robot
+                                      ↘ Three.js 3D view (camera-space coordinates)
 ```
 
 ---
@@ -13,9 +13,13 @@ Camera → MediaPipe (21 landmarks) → Gesture detection → WebSocket → Your
 
 | Feature | Description |
 |---------|-------------|
+| **Dual-hand tracking** | Up to 2 hands simultaneously, colour-coded (green / blue) |
 | 21 joint 3D tracking | Full hand skeleton in centimetres (camera frame) |
+| **True 3D positioning** | Hands rendered at absolute camera-space coordinates — matching FOV |
+| **Distance labels** | Wrist→fingertip length for each finger; wrist-to-wrist distance between hands |
 | Depth estimation | Pinhole-model depth from apparent hand size |
-| Gesture detection | **GRAB**, **OPEN**, **POINT**, **PEACE** |
+| Gesture detection | **GRAB**, **OPEN**, **POINT**, **PEACE** per hand |
+| Left/Right labelling | Correctly swapped to match the mirrored webcam view |
 | WebSocket output | ~30 fps JSON frames to any server |
 | Video file mode | Test with pre-recorded `.mp4` / `.webm` files |
 | Calibration | Hand size + camera FOV, saved to `localStorage` |
@@ -86,9 +90,11 @@ Or deploy the `dist/` folder to any static hosting (GitHub Pages, Netlify, etc.)
 ## Usage Guide
 
 ### Camera mode (default)
-- App starts with your webcam automatically
-- Hold your hand in front of the camera, palm facing the lens
-- The left panel shows the 2D overlay; the right panel shows the 3D skeleton
+- App starts with your webcam automatically (mirrored view)
+- Hold **one or two hands** in front of the camera, palms facing the lens
+- **Left panel** — 2D overlay with skeleton and hand label (Left/Right)
+- **Right panel** — 3D view: hands positioned at true camera-space coordinates with FOV matching the real camera
+- Distance labels (Thumb / Index / Middle / Ring / Pinky lengths, and wrist-to-wrist) appear in the 3D view
 
 ### Video file mode
 - Click **📁 Video** to load a `.mp4` or `.webm` file
@@ -158,9 +164,11 @@ async def handler(websocket):
     print("Client connected")
     async for message in websocket:
         data = json.loads(message)
-        wrist = data["wrist_cm"]
-        gesture = data.get("gesture")
-        print(f"wrist=({wrist['x']:.1f}, {wrist['y']:.1f}, {wrist['z']:.1f}) cm  gesture={gesture}")
+        for hand in data["hands"]:
+            wrist   = hand["wrist_cm"]
+            gesture = hand.get("gesture")
+            label   = hand["label"]
+            print(f"{label}: wrist=({wrist['x']:.1f}, {wrist['y']:.1f}, {wrist['z']:.1f}) cm  gesture={gesture}")
 
 async def main():
     async with websockets.serve(handler, "localhost", 8765):
@@ -259,8 +267,11 @@ If you prefer to consume data within the same browser tab:
 
 ```js
 window.addEventListener('hand-robot-data', (e) => {
-  const { wrist_cm, gesture, joints_cm } = e.detail;
-  // drive your in-page robot simulation here
+  const { hands } = e.detail;
+  hands.forEach(hand => {
+    const { label, wrist_cm, gesture, joints_cm } = hand;
+    // drive your in-page robot simulation here
+  });
 });
 
 // Or poll the latest frame:
