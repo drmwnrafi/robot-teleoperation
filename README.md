@@ -6,10 +6,13 @@ teleoperating a robot arm in real time.
 
 ## Demo
 
-[docs/demo.mp4](docs/demo.mp4) — short walkthrough of the UI and the
-WebSocket output.
+<video src="https://github.com/user-attachments/assets/14bf5437-a007-4f30-be92-aae054092e56" controls width="100%"></video>
 
-<video src="docs/demo.mp4" controls width="100%"></video>
+
+
+
+
+
 
 ## Requirements
 
