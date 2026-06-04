@@ -4,6 +4,13 @@ Web app that takes a camera feed (or a video file), detects hands + upper body v
 MediaPipe, and pushes a JSON frame over WebSocket every ~33 ms. Intended for
 teleoperating a robot arm in real time.
 
+## Demo
+
+[docs/demo.mp4](docs/demo.mp4) — short walkthrough of the UI and the
+WebSocket output.
+
+<video src="docs/demo.mp4" controls width="100%"></video>
+
 ## Requirements
 
 - Node.js 18+
