@@ -2,7 +2,7 @@ import os
 from glob import glob
 from setuptools import find_packages, setup
 
-package_name = 'mm_robot_teleop'
+package_name = 'robot_teleop'
 
 setup(
     name=package_name,
@@ -25,13 +25,12 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'landmarks_node = mm_robot_teleop.landmarks_node:main',
-            'hand_landmarks_node = mm_robot_teleop.hand_landmarks_node:main',
-            'landmark_marker = mm_robot_teleop.landmark_marker:main',
-            'landmark_processor = mm_robot_teleop.landmark_processor:main',
-            'servo_keyboard = mm_robot_teleop.servo_keyboard:main',
-            'hand_pose_tracker = mm_robot_teleop.hand_pose_tracker:main',
-            'group_keyboard = mm_robot_teleop.group_keyboard:main',
+            'landmarks_node = robot_teleop.landmarks_node:main',
+            'hand_landmarks_node = robot_teleop.hand_landmarks_node:main',
+            'landmark_marker = robot_teleop.landmark_marker:main',
+            'landmark_processor = robot_teleop.landmark_processor:main',
+            'servo_keyboard = robot_teleop.servo_keyboard:main',
+            'hand_pose_tracker = robot_teleop.hand_pose_tracker:main',
         ],
     },
 )

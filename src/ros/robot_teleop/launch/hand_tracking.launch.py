@@ -61,7 +61,7 @@ def generate_launch_description():
     )
 
     processor_node = Node(
-        package='mm_robot_teleop',
+        package='robot_teleop',
         executable='landmark_processor',
         name='landmark_processor',
         output='screen',
@@ -73,7 +73,7 @@ def generate_launch_description():
     )
 
     marker_landmark_node = Node(
-        package='mm_robot_teleop',
+        package='robot_teleop',
         executable='landmark_marker',
         name='landmark_marker',
         output='screen',
@@ -99,7 +99,7 @@ def generate_launch_description():
     )
 
     rviz_config_dir = os.path.join(
-        get_package_share_directory('mm_robot_teleop'),
+        get_package_share_directory('robot_teleop'),
         'rviz',
         'hand_tracking.rviz' 
     )

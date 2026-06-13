@@ -240,7 +240,7 @@ const latest = window.__handRobotData;
 ## Structure
 
 ```
-hand-tracker/
+robot-teleoperation/
 ├── index.html
 ├── src/main.js
 ├── package.json
