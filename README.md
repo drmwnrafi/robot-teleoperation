@@ -240,9 +240,179 @@ const latest = window.__handRobotData;
 ## Structure
 
 ```
-robot-teleoperation/
-├── index.html
-├── src/main.js
-├── package.json
-└── README.md
+├── docs
+│   └── demo.mp4
+├── README.md
+└── src
+    ├── ros
+    │   └── robot_teleop
+    └── web
+        ├── index.html
+        ├── main.js
+        ├── package.json
+        ├── package-lock.json
+        └── v1
 ```
+
+## ROS Package 
+This package works together with the '[ROS 2 ObotX Mobile Manipulator](https://github.com/obotx/mobile-manipulator)'.
+
+### Wrist Position as Target Node 
+Run the hand pose tracker:
+
+```bash
+ros2 run mm_robot_teleop hand_pose_tracker --ros-args -p closest_target:=true
+```
+
+Parameter :
+- 'closest_target' : If true, the target is assigned to the arm that is closest to the detected wrist position, regardless of whether the hand is detected as left or right
+
+## Landmark Marker Node
+This node visualizes processed hand and body landmarks in RViz using `MarkerArray`.
+
+```bash
+ros2 run landmark_marker
+```
+
+Visualization :
+- Left and right hand landmarks
+- Hand skeleton connections
+- Hand labels and gestures
+- Body landmarks
+- Body skeleton connections
+
+## Landmark Processor Node
+This node converts raw landmark data from the web interface into ROS-friendly messages for teleoperation and visualization.
+un
+
+Run :
+```bash
+ros2 run robot_teleop landmark_processor --ros-args -p fix_x:=true -p fix_y:=true -p fix_z:=false
+```
+
+Parameters:
+- `fix_x`	[Bool]	: Use shoulder midpoint as the X-axis origin
+- `fix_y`	[Bool]	: Use shoulder midpoint as the Y-axis origin
+- `fix_z`	[Bool]	: Use shoulder midpoint as the Z-axis origin
+
+## Keyboard Servo Control Node
+This node provides keyboard-based teleoperation for the ObotX dual-arm robot using MoveIt Servo.
+Supports three control modes:
+- Twist Mode – Cartesian velocity control.
+- Joint Mode – Joint velocity control.
+- Pose Mode – End-effector target pose contro
+
+Run :
+```bash
+ros2 run robot_teleop servo_keyboard_input
+```
+
+### Hand Tracking Launch
+Launch the complete hand-tracking pipeline, including:
+- Rosbridge WebSocket server
+- Landmark processing node
+- Landmark visualization node
+- Static TF publisher
+- RViz visualization (optional)
+
+Run :
+```bash
+ros2 launch robot_teleop hand_tracking.launch.py
+```
+
+Parameters:
+- `use_sim_time` [BOOL ] : Use simulation time
+- `use_rviz` [BOOL ] : Launch RViz automatically
+- `parent_frame` [ROS TF] : Parent frame for the landmark static transform
+- `offset_x` [FLOAT] : Offset applied along the X-axis
+- `offset_y` [FLOAT] : Offset applied along the Y-axis
+- `offset_z` [FLOAT] : Offset applied along the Z-axis
+- `fix_origin_x` [BOOL] : Use the midpoint between both shoulders as the X-axis origin
+- `fix_origin_y` [BOOL] : Use the midpoint between both shoulders as the Y-axis origin
+- `fix_origin_z` [BOOL] : Use the midpoint between both shoulders as the Z-axis origin
+
+## ROS2 Custom Massage
+The package defines the following custom ROS messages
+
+### BodyLandmark.msg
+Represents a single body landmark
+
+```text
+string joint_name
+float32 x
+float32 y
+float32 z
+```
+
+| Field        | Description                                            |
+| ------------ | ------------------------------------------------------ |
+| `joint_name` | Name of the body joint (e.g. `shoulder_L`, `wrist_R`). |
+| `x`          | X position in meters.                                  |
+| `y`          | Y position in meters.                                  |
+| `z`          | Z position in meters.                                  |
+
+---
+
+### HandLandmark.msg
+Represents a detected hand and its associated features.
+
+```text
+bool present
+float32 confidence
+float32 depth_m
+geometry_msgs/Point wrist_m
+geometry_msgs/Point[] joints_m
+float32[] palm_normal
+float32[] finger_dir
+float32[] finger_curl
+float32[] pinch_m
+float32 grip_aperture_m
+string gesture
+int32 gesture_id
+bool is_grab
+```
+
+| Field             | Description                                   |
+| ----------------- | --------------------------------------------- |
+| `present`         | Whether the hand is currently detected.       |
+| `confidence`      | Detection confidence score.                   |
+| `depth_m`         | Estimated hand depth in meters.               |
+| `wrist_m`         | Wrist position in meters.                     |
+| `joints_m`        | Array of 21 hand landmarks in meters.         |
+| `palm_normal`     | Palm normal vector.                           |
+| `finger_dir`      | Main finger direction vector.                 |
+| `finger_curl`     | Curl values for each finger.                  |
+| `pinch_m`         | Pinch distances in meters.                    |
+| `grip_aperture_m` | Distance between thumb and fingers in meters. |
+| `gesture`         | Recognized gesture name.                      |
+| `gesture_id`      | Gesture identifier.                           |
+| `is_grab`         | Indicates whether a grab gesture is detected. |
+
+---
+
+### LandmarkMsg.msg
+Main message containing hand and body tracking data.
+
+```text
+float64 t
+int32 seq
+float32 fps
+string frame_info
+string calibration_info
+HandLandmark left_hand
+HandLandmark right_hand
+BodyLandmark[] body_landmarks
+string[] landmark_names
+```
+
+| Field              | Description                         |
+| ------------------ | ----------------------------------- |
+| `t`                | Timestamp from the tracking source. |
+| `seq`              | Frame sequence number.              |
+| `fps`              | Tracking frame rate.                |
+| `frame_info`       | Serialized frame metadata.          |
+| `calibration_info` | Serialized calibration metadata.    |
+| `left_hand`        | Processed left hand data.           |
+| `right_hand`       | Processed right hand data.          |
+| `body_landmarks`   | Array of body landmarks.            |
+| `landmark_names`   | List of available landmark names.   |

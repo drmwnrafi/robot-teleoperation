@@ -44,11 +44,33 @@ def generate_launch_description():
         description='Z offset for the landmark'
     )
 
+    fix_origin_x_arg = DeclareLaunchArgument(
+        'fix_origin_x',
+        default_value=True,
+        description='X-axis of mid point of both shoulder as origin'
+    )
+
+    fix_origin_y_arg = DeclareLaunchArgument(
+        'fix_origin_y',
+        default_value=True,
+        description='Y-axis of mid point of both shoulder as origin'
+    )
+
+    fix_origin_z_arg = DeclareLaunchArgument(
+        'fix_offset_z',
+        default_value=False,
+        description='Z-axis of mid point of both shoulder as origin'
+    )
+
     use_rviz = LaunchConfiguration('use_rviz')
     parent_frame = LaunchConfiguration('parent_frame')
     offset_x = LaunchConfiguration('offset_x')
     offset_y = LaunchConfiguration('offset_y')
     offset_z = LaunchConfiguration('offset_z')
+    
+    fix_origin_x = LaunchConfiguration('fix_origin_x')
+    fix_origin_y = LaunchConfiguration('fix_origin_y')
+    fix_origin_z = LaunchConfiguration('fix_origin_z')
 
     rosbridge_launch = IncludeLaunchDescription(
         AnyLaunchDescriptionSource(
@@ -66,9 +88,9 @@ def generate_launch_description():
         name='landmark_processor',
         output='screen',
         parameters=[
-            {'fix_x': True},
-            {'fix_y': True},
-            {'fix_z': False},
+            {'fix_x': fix_origin_x},
+            {'fix_y': fix_origin_y},
+            {'fix_z': fix_origin_z},
             {'use_sim_time': LaunchConfiguration('use_sim_time')}]
     )
 
@@ -121,6 +143,9 @@ def generate_launch_description():
         offset_x_arg,
         offset_y_arg,
         offset_z_arg,
+        fix_origin_x_arg,
+        fix_origin_y_arg,
+        fix_origin_z_arg,
         rosbridge_launch,
         processor_node,
         marker_landmark_node,
