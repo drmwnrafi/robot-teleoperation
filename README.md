@@ -1,3 +1,5 @@
+
+
 # Hand & Body Tracker
 
 Web app that takes a camera feed (or a video file), detects hands + upper body via
@@ -8,11 +10,11 @@ teleoperating a robot arm in real time.
 
 <video src="https://github.com/user-attachments/assets/14bf5437-a007-4f30-be92-aae054092e56" controls width="100%"></video>
 
+## ROS Demo
 
+<video src="https://github.com/user-attachments/assets/69ce3621-14c9-4a60-9063-0dc903a5dc13" controls width="100%"></video>
 
-
-
-
+<video src="https://github.com/user-attachments/assets/dd417593-5118-4d7c-b3a1-64e6295da1a3" controls width="100%"></video>
 
 ## Requirements
 
