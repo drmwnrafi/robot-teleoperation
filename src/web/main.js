@@ -100,6 +100,7 @@ const speedSelect   = document.getElementById('speed-select');
 const wsUrlInput    = document.getElementById('ws-url-input');
 const btnWs         = document.getElementById('btn-ws');
 const wsStatusDot   = document.getElementById('ws-status');
+const btnModeRos    = document.getElementById('btn-mode-ros');
 
 // Mirror flag: true for webcam (feels natural), false for video files
 let isMirrored = true;
@@ -108,7 +109,7 @@ let isMirrored = true;
 // Sends robot data frames to a WebSocket server (e.g. Python bridge or ROS).
 // Auto-reconnects with exponential back-off up to MAX_RETRY attempts.
 class RobotSocket {
-  static THROTTLE_MS = 33; // ~30 fps cap — prevents flooding slow robot bridges
+  static THROTTLE_MS = 33; 
   static MAX_RETRY   = 10;
 
   constructor() {
@@ -118,34 +119,80 @@ class RobotSocket {
     this._attempts   = 0;
     this._retryTimer = null;
     this._lastSend   = 0;
+    
+    // ─── DUAL MODE SUPPORT ──────────────────────────────────────────────
+    // 'raw' -> Plain JSON (for Python websockets, Node.js, etc.)
+    // 'ros' -> rosbridge protocol (for ROS 2 rosbridge_server)
+    this._mode       = 'raw'; 
+    
+    // ROS specific config (only used if mode is 'ros')
+    this._rosTopic   = '/raw_landmarks';
+    this._rosType    = 'std_msgs/String';
+    this._advertised = false;
+    // ────────────────────────────────────────────────────────────────────
+  }
+
+  /**
+   * Set the connection mode.
+   * @param {string} mode - 'raw' or 'ros'
+   */
+  setMode(mode) {
+    this._mode = mode;
+    console.log(`[RobotSocket] Mode set to: ${mode}`);
+    
+    if (mode === 'ros' && this._ws && this._ws.readyState === WebSocket.OPEN) {
+      this._advertiseTopic();
+    } else if (mode === 'raw') {
+      this._advertised = false; 
+    }
   }
 
   connect(url) {
-    this._url      = url.trim();
-    this._enabled  = true;
-    this._attempts = 0;
+    this._url        = url.trim();
+    this._enabled    = true;
+    this._attempts   = 0;
+    this._advertised = false;
     clearTimeout(this._retryTimer);
     this._tryConnect();
   }
 
   disconnect() {
-    this._enabled = false;
+    this._enabled    = false;
+    this._advertised = false;
     clearTimeout(this._retryTimer);
     if (this._ws) {
-      this._ws.onclose = null; // prevent auto-retry on intentional close
+      this._ws.onclose = null;
       this._ws.close();
       this._ws = null;
     }
     this._updateStatus('disconnected');
   }
 
-  /** Send data; silently dropped if not connected or throttle interval not elapsed. */
   send(data) {
     if (!this._ws || this._ws.readyState !== WebSocket.OPEN) return;
+    // In ROS mode, wait until the topic is advertised before sending data
+    if (this._mode === 'ros' && !this._advertised) return; 
+    
     const now = performance.now();
     if (now - this._lastSend < RobotSocket.THROTTLE_MS) return;
     this._lastSend = now;
-    try { this._ws.send(JSON.stringify(data)); } catch { /* ws closed mid-send */ }
+    
+    let payload;
+    if (this._mode === 'ros') {
+      // Wrap in rosbridge publish message
+      payload = {
+        op: 'publish',
+        topic: this._rosTopic,
+        msg: { data: JSON.stringify(data) } // Sends JSON as a string inside std_msgs/String
+      };
+    } else {
+      // Send raw JSON for plain Python/Node servers
+      payload = data;
+    }
+    
+    try { 
+      this._ws.send(JSON.stringify(payload)); 
+    } catch { /* ws closed mid-send */ }
   }
 
   _tryConnect() {
@@ -159,13 +206,37 @@ class RobotSocket {
       return;
     }
     this._ws = ws;
-    ws.onopen  = () => { this._attempts = 0; this._updateStatus('connected'); };
+    ws.onopen  = () => { 
+      this._attempts = 0; 
+      this._updateStatus('connected'); 
+      // If in ROS mode, immediately advertise the topic upon connection
+      if (this._mode === 'ros') {
+        this._advertiseTopic();
+      }
+    };
     ws.onerror = () => { this._updateStatus('error'); };
     ws.onclose = () => {
       this._ws = null;
+      this._advertised = false;
       if (this._enabled) this._scheduleRetry();
       else this._updateStatus('disconnected');
     };
+  }
+
+  _advertiseTopic() {
+    if (!this._ws || this._ws.readyState !== WebSocket.OPEN) return;
+    const advMsg = {
+      op: 'advertise',
+      topic: this._rosTopic,
+      type: this._rosType
+    };
+    try {
+      this._ws.send(JSON.stringify(advMsg));
+      this._advertised = true;
+      console.log(`[RobotSocket] Advertised ROS topic '${this._rosTopic}'`);
+    } catch (e) {
+      console.error('[RobotSocket] Failed to advertise', e);
+    }
   }
 
   _scheduleRetry() {
@@ -175,7 +246,7 @@ class RobotSocket {
       if (btnWs) { btnWs.textContent = 'Connect'; btnWs.classList.remove('active'); }
       return;
     }
-    const delay = Math.min(1000 * (1 << this._attempts), 10000); // 1s, 2s, 4s … 10s
+    const delay = Math.min(1000 * (1 << this._attempts), 10000);
     this._attempts++;
     this._retryTimer = setTimeout(() => this._tryConnect(), delay);
     this._updateStatus('connecting');
@@ -187,9 +258,11 @@ class RobotSocket {
       const labels = { connecting: 'Connecting…', connected: 'Connected', disconnected: 'Disconnected', error: 'Error — retrying' };
       wsStatusDot.title = labels[state] ?? state;
     }
+    
     if (btnWs) {
-      btnWs.textContent = this._enabled ? 'Disconnect' : 'Connect';
-      btnWs.classList.toggle('active', state === 'connected');
+      const isConnected = this._enabled && state === 'connected';
+      btnWs.textContent = isConnected ? 'Disconnect' : 'Connect';
+      btnWs.classList.toggle('active', isConnected);
     }
   }
 }
@@ -241,6 +314,14 @@ labelRenderer.domElement.style.left = '0';
 labelRenderer.domElement.style.pointerEvents = 'auto'; // needed for OrbitControls on front view
 threePanel.appendChild(labelRenderer.domElement);
 
+// CSS2D label renderer (overlaid on top of the WebGL canvas for distance text)
+const labelRenderer = new CSS2DRenderer();
+labelRenderer.domElement.style.position = 'absolute';
+labelRenderer.domElement.style.top = '0';
+labelRenderer.domElement.style.left = '0';
+labelRenderer.domElement.style.pointerEvents = 'auto'; // needed for OrbitControls on front view
+threePanel.appendChild(labelRenderer.domElement);
+
 const scene  = new THREE.Scene();
 // Front view camera — interactive (OrbitControls). Starts near real-camera viewpoint.
 // Far plane = 200 scene units = 2000 cm = 20 m, well beyond any realistic body depth.
@@ -250,10 +331,9 @@ cam3d.position.set(0, 1.0, -2.0);
 
 // OrbitControls bound to the left (FRONT) half of the panel via labelRenderer.domElement
 const controls3d = new OrbitControls(cam3d, labelRenderer.domElement);
-controls3d.enableDamping = true;
 controls3d.dampingFactor = 0.08;
 controls3d.minDistance   = 0.1;
-controls3d.maxDistance   = 100.0;  // 10 m — lets you pull back to see body when it's far
+controls3d.maxDistance   = 100.0;  
 controls3d.target.set(0, 0, -4.5);
 controls3d.update();
 // Double-click to reset camera to default position
@@ -269,6 +349,7 @@ const _orbitTarget = new THREE.Vector3(0, 0, -4.5);
 scene.add(new THREE.AmbientLight(0xffffff, 0.7));
 const dirLight = new THREE.DirectionalLight(0x00ff88, 2.5);
 dirLight.position.set(0.2, 0.3, -0.4);
+dirLight.position.set(0.2, 0.3, -0.4);
 scene.add(dirLight);
 
 // Axis helper placed at a typical hand depth (0.6 m = 60 cm)
@@ -281,21 +362,30 @@ const HAND_PALETTE = [
   { normal: 0x00ff88, tip: 0xffff00, grab: 0xff4444, open: 0x00ff88, point: 0x58a6ff, peace: 0xf0b429, bone: 0x00aa55, boneActive: 0xaa2222 },
   { normal: 0x58a6ff, tip: 0xffa500, grab: 0xff8800, open: 0x58a6ff, point: 0xff88ff, peace: 0xffbb44, bone: 0x2255aa, boneActive: 0xaa6600 },
 ];
+// Axis helper placed at a typical hand depth (0.6 m = 60 cm)
+const axesHelper = new THREE.AxesHelper(0.05);
+axesHelper.position.set(0, 0, -0.6);
+scene.add(axesHelper);
 
+// ── Per-hand colour palettes ──
+const HAND_PALETTE = [
+  { normal: 0x00ff88, tip: 0xffff00, grab: 0xff4444, open: 0x00ff88, point: 0x58a6ff, peace: 0xf0b429, bone: 0x00aa55, boneActive: 0xaa2222 },
+  { normal: 0x58a6ff, tip: 0xffa500, grab: 0xff8800, open: 0x58a6ff, point: 0xff88ff, peace: 0xffbb44, bone: 0x2255aa, boneActive: 0xaa6600 },
+];
+
+// ── 21 joint spheres × 2 hands ──
 // ── 21 joint spheres × 2 hands ──
 const GEO_JOINT = new THREE.SphereGeometry(0.03, 10, 10);
 const GEO_TIP   = new THREE.SphereGeometry(0.048, 10, 10);
-const handJointMeshes = HAND_PALETTE.map(palette =>
-  Array.from({ length: 21 }, (_, i) => {
-    const m = new THREE.Mesh(
-      TIPS.has(i) ? GEO_TIP : GEO_JOINT,
-      new THREE.MeshStandardMaterial({ color: palette.normal })
-    );
-    m.visible = false;
-    scene.add(m);
-    return m;
-  })
+const jointMats = Array.from({ length: 21 }, () =>
+  new THREE.MeshStandardMaterial({ color: 0x00ff88 })
 );
+const jointMeshes = Array.from({ length: 21 }, (_, i) => {
+  const m = new THREE.Mesh(TIPS.has(i) ? GEO_TIP : GEO_JOINT, jointMats[i]);
+  m.visible = false;
+  scene.add(m);
+  return m;
+});
 
 // ── Bone lines × 2 hands ──
 const handBoneLines = HAND_PALETTE.map(palette =>
@@ -310,6 +400,40 @@ const handBoneLines = HAND_PALETTE.map(palette =>
     return { line, a, b, mat };
   })
 );
+
+// ── Distance labels in 3D ──
+// Per hand: wrist→tip for all 5 fingers; inter-hand: wrist-to-wrist.
+const DIST_FINGER_PAIRS = [[0,4],[0,8],[0,12],[0,16],[0,20]];
+const DIST_FINGER_NAMES = ['Thumb','Index','Middle','Ring','Pinky'];
+
+function makeDistLabel(color = '#ffffff') {
+  const div = document.createElement('div');
+  div.style.cssText = `font-size:10px;font-family:Consolas,monospace;color:${color};
+    background:rgba(13,17,23,0.75);padding:1px 5px;border-radius:3px;
+    white-space:nowrap;pointer-events:none;letter-spacing:0.5px;`;
+  const obj = new CSS2DObject(div);
+  obj.visible = false;
+  scene.add(obj);
+  return { obj, div };
+}
+
+// [hand0: 5 finger labels], [hand1: 5 finger labels], [inter-hand label]
+const handDistLabels = HAND_PALETTE.map((p, h) =>
+  DIST_FINGER_NAMES.map(() => makeDistLabel(h === 0 ? '#00ff88' : '#58a6ff'))
+);
+const interHandLabel = makeDistLabel('#f0b429');
+
+// ── Body skeleton (MediaPipe Pose upper body) ──
+const bodyBoneLines = POSE_UPPER.map(() => {
+  const geo = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(), new THREE.Vector3(),
+  ]);
+  const mat = new THREE.LineBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.7 });
+  const line = new THREE.Line(geo, mat);
+  line.visible = false;
+  scene.add(line);
+  return { line };
+});
 
 // ── Distance labels in 3D ──
 // Per hand: wrist→tip for all 5 fingers; inter-hand: wrist-to-wrist.
@@ -420,6 +544,29 @@ let _frameSeq = 0;
 const _frameTimes = [];
 
 // ─── Hand results callback ────────────────────────────────────────────────────
+function determineHandLabel(handLm) {
+  if (!currentPoseLms) return null;
+
+  const wrist = handLm[0];
+
+  const leftWrist = currentPoseLms[15];
+  const rightWrist = currentPoseLms[16];
+
+  if (!leftWrist || !rightWrist) return null;
+
+  const dLeft = Math.hypot(
+    wrist.x - leftWrist.x,
+    wrist.y - leftWrist.y
+  );
+
+  const dRight = Math.hypot(
+    wrist.x - rightWrist.x,
+    wrist.y - rightWrist.y
+  );
+
+  return dLeft < dRight ? "Left" : "Right";
+}
+
 function onHandResults(results) {
   resizeAll();
   const W = overlay.width;
@@ -427,7 +574,7 @@ function onHandResults(results) {
 
   ctx.clearRect(0, 0, W, H);
 
-  // ── 2-D body skeleton overlay (drawn first so hands appear on top) ─────────
+  // ── 2‑D body skeleton overlay ─────────────────────────────────────────────
   if (currentPoseLms) {
     const { ox, oy, dw, dh } = getVideoContentRect();
     const plmX = (nx) => isMirrored ? ox + (1 - nx) * dw : ox + nx * dw;
@@ -445,7 +592,9 @@ function onHandResults(results) {
   }
 
   const numHands = results.multiHandLandmarks?.length ?? 0;
+  const maxDisplayHands = Math.min(numHands, HAND_PALETTE.length);
 
+  // Hide hand visuals if no hands, but continue to body data publishing
   if (numHands === 0) {
     handJointMeshes.forEach(hm => hm.forEach(m => { m.visible = false; }));
     handBoneLines.forEach(hl => hl.forEach(({ line }) => { line.visible = false; }));
@@ -455,54 +604,40 @@ function onHandResults(results) {
     gestureEl.textContent = '';
     coordsEl.innerHTML = '<span class="no-hand">No hand detected</span>';
     statusEl.textContent = 'Waiting for hand…';
-    return;
+  } else {
+    statusEl.textContent = numHands === 1 ? 'Tracking 1 hand ✓' : 'Tracking 2 hands ✓';
   }
 
-  statusEl.textContent = numHands === 1 ? 'Tracking 1 hand ✓' : 'Tracking 2 hands ✓';
-
-  // AR must use VIDEO native dimensions (not the canvas CSS size), because MediaPipe
-  // normalizes lm.y to videoHeight and lm.x to videoWidth. Using the canvas size would
-  // skew the depth estimate whenever the window aspect ratio differs from the camera's.
-  const AR     = (video.videoWidth || overlay.width) / (video.videoHeight || overlay.height || 1);
+  const AR = (video.videoWidth || overlay.width) / (video.videoHeight || overlay.height || 1);
   const f_norm = 0.5 / Math.tan(CAMERA_FOV_DEG * Math.PI / 360);
   const { ox, oy, dw, dh } = getVideoContentRect();
   const lmX = (nx) => isMirrored ? ox + (1 - nx) * dw : ox + nx * dw;
   const lmY = (ny) => oy + ny * dh;
 
-  const allHandData  = [];
+  const allHandData = [];
   const gestureTexts = [];
 
-  for (let h = 0; h < numHands; h++) {
-    const lm      = results.multiHandLandmarks[h];
-    const wLm     = results.multiHandWorldLandmarks?.[h];
-    const palette = HAND_PALETTE[h] ?? HAND_PALETTE[0];
-    const rawLabel  = results.multiHandedness?.[h]?.label ?? `Hand ${h + 1}`;
-    // MediaPipe labels from the person's own perspective (mirror of camera view).
-    // Swap Left↔Right so the label matches what the user sees on screen.
-    const handLabel = rawLabel === 'Left' ? 'Right' : rawLabel === 'Right' ? 'Left' : rawLabel;
+  // ── Process hands (only up to available resources) ────────────────────────
+  for (let h = 0; h < maxDisplayHands; h++) {
+    const lm = results.multiHandLandmarks[h];
+    const wLm = results.multiHandWorldLandmarks?.[h];
+    const palette = HAND_PALETTE[h];
+    const rawLabel = results.multiHandedness?.[h]?.label ?? `Hand ${h + 1}`;
+    const handLabel = isMirrored
+      ? (rawLabel === 'Left' ? 'Right' : rawLabel === 'Right' ? 'Left' : rawLabel)
+      : rawLabel;
 
-    // ── Depth: median of 4 rigid segments calibrated to HAND_SIZE_CM ──────────────
-    // We use FIXED anatomical ratios (not wLm-derived lengths) because MediaPipe's
-    // world landmarks — especially the z component — drift frame-to-frame and would
-    // make our depth estimate noisy. HAND_SIZE_CM is the wrist→middle-MCP physical
-    // length the user sets in the calibration bar (≈9 cm for an adult).
-    // Robustness: reject any per-segment depth that falls outside a sane physical
-    // range (10 cm – 5 m); those are detection glitches where MediaPipe collapses
-    // two landmarks onto each other for a frame. Then take the median of what's left.
+    // Depth estimation
     const SEG_PAIRS = [
-      [0,  9, 1.00],  // wrist → middle MCP (HAND_SIZE_CM, by definition)
-      [0,  5, 0.95],  // wrist → index MCP
-      [0, 17, 0.85],  // wrist → pinky MCP
-      [5, 17, 0.78],  // index MCP → pinky MCP (palm width)
+      [0, 9, 1.00], [0, 5, 0.95], [0, 17, 0.85], [5, 17, 0.78]
     ];
-    const DEPTH_MIN = 10, DEPTH_MAX = 500;  // physical sanity range, cm
+    const DEPTH_MIN = 10, DEPTH_MAX = 500;
     const validDepths = SEG_PAIRS.map(([a, b, ratio]) => {
-      const d2d   = Math.hypot(lm[a].x - lm[b].x, (lm[a].y - lm[b].y) / AR);
+      const d2d = Math.hypot(lm[a].x - lm[b].x, (lm[a].y - lm[b].y) / AR);
       const lenCm = HAND_SIZE_CM * ratio;
-      const d     = (lenCm * f_norm) / (d2d + 1e-9);
+      const d = (lenCm * f_norm) / (d2d + 1e-9);
       return (d >= DEPTH_MIN && d <= DEPTH_MAX) ? d : null;
     }).filter(d => d !== null).sort((x, y) => x - y);
-    // Need at least 2 valid estimates to trust a median; else keep previous smoothed value.
     let rawDepth;
     if (validDepths.length >= 2) {
       rawDepth = (validDepths[Math.floor(validDepths.length / 2) - 1] +
@@ -510,51 +645,39 @@ function onHandResults(results) {
     } else if (validDepths.length === 1) {
       rawDepth = validDepths[0];
     } else {
-      rawDepth = smoothDepth[h] ?? 100;  // no signal this frame; hold previous
+      rawDepth = smoothDepth[h] ?? 100;
     }
     if (!smoothDepth[h]) smoothDepth[h] = rawDepth;
-    smoothDepth[h] = smoothDepth[h] * 0.90 + rawDepth * 0.10;  // stronger smoothing
+    smoothDepth[h] = smoothDepth[h] * 0.90 + rawDepth * 0.10;
     let depthCm = smoothDepth[h];
-
-    // Depth-ordering constraint: a visible hand must be in front of the body in 3D.
-    // MediaPipe's depth estimate briefly overshoots when the hand passes across the
-    // body (landmarks get confused, rigid segments collapse). Clamp the hand to at
-    // most the body depth so it can never visually "shoot behind" the torso.
-    // Body depth only trusted when it's in a reasonable physical range.
     if (lastBodyDepthCm !== null && lastBodyDepthCm > 20 && lastBodyDepthCm < 500) {
       depthCm = Math.min(depthCm, lastBodyDepthCm);
     }
-    smoothDepth[h] = depthCm;  // re-store clamped value so the EMA doesn't bleed it back
+    smoothDepth[h] = depthCm;
 
     lastHandDepthCm = smoothDepth.filter(Boolean).reduce((s, v) => s + v, 0) /
                       smoothDepth.filter(Boolean).length;
     if (h === 0 && depthDisplay) depthDisplay.textContent = depthCm.toFixed(1);
 
-    // Mirror X when webcam is mirrored so 3D matches the 2D overlay.
-    // MediaPipe processes the raw (non-flipped) frame; 2D uses 1-nx for display.
-    const mirX = isMirrored ? -1 : 1;
-    const wristXcm =  mirX * (lm[0].x - 0.5) / f_norm * depthCm;
+    const wristXcm = (lm[0].x - 0.5) / f_norm * depthCm;
     const wristYcm = -(lm[0].y - 0.5) / f_norm * depthCm;
-    const wristZcm =  depthCm;
+    const wristZcm = depthCm;
 
-    // ── Gesture ─────────────────────────────────────────────────────────────
     const gesture = detectGesture(lm);
-    const isGrab  = gesture === 'GRAB';
+    const isGrab = gesture === 'GRAB';
     if (gesture) gestureTexts.push({ label: handLabel, gesture });
 
-    // ── 2-D skeleton overlay ────────────────────────────────────────────────
+    // 2‑D overlay drawing
     const baseColor = h === 0 ? '#00ff88' : '#58a6ff';
     const boneColor = GESTURE_COLOR[gesture] ?? baseColor;
-    ctx.lineWidth   = 2;
+    ctx.lineWidth = 2;
     ctx.strokeStyle = boneColor;
-
     CONNECTIONS.forEach(([a, b]) => {
       ctx.beginPath();
       ctx.moveTo(lmX(lm[a].x), lmY(lm[a].y));
       ctx.lineTo(lmX(lm[b].x), lmY(lm[b].y));
       ctx.stroke();
     });
-
     lm.forEach((pt, i) => {
       const r = TIPS.has(i) ? 7 : 4;
       ctx.fillStyle = TIPS.has(i) ? boneColor : (isGrab ? '#ff8888' : (h === 0 ? '#00cc66' : '#4488cc'));
@@ -562,129 +685,142 @@ function onHandResults(results) {
       ctx.arc(lmX(pt.x), lmY(pt.y), r, 0, Math.PI * 2);
       ctx.fill();
     });
-
-    // Hand label drawn next to wrist
-    ctx.font      = 'bold 13px Consolas, monospace';
+    ctx.font = 'bold 13px Consolas, monospace';
     ctx.fillStyle = baseColor;
     ctx.fillText(handLabel, lmX(lm[0].x) + 10, lmY(lm[0].y) - 8);
 
-    // ── 3-D positions in cm (camera frame: x=right, y=up, +z=away from camera) ─
-    // Each joint is placed at its IMAGE position projected through the camera ray,
-    // with per-joint depth = wrist depth + world-landmark relative z. This keeps
-    // every joint where the image actually shows it (pixel-precise), and uses the
-    // world landmarks only for relative depth refinement. Hand & body share this
-    // exact same projection, so they live in one consistent cm coordinate frame.
+    // 3‑D positions (cm)
     const pos_cm = lm.map((pt, i) => {
       const relZcm = (wLm && wLm[i]) ? wLm[i].z * 100 : (pt.z * depthCm);
-      const jd     = depthCm + relZcm;  // joint depth, cm from camera
+      const jd = depthCm + relZcm;
       return {
-        x:  mirX * (pt.x - 0.5) / f_norm * jd,
+        x: (pt.x - 0.5) / f_norm * jd,
         y: -(pt.y - 0.5) / f_norm * jd,
-        z:  jd,
+        z: jd,
       };
     });
 
-    allHandData.push({ handLabel, depthCm, wristXcm, wristYcm, wristZcm, pos_cm, wLm,
+    allHandData.push({
+      handLabel, depthCm, wristXcm, wristYcm, wristZcm, pos_cm, wLm,
       palmNormal: null, fingerDir: null, fingerCurl: null, pinchCm: null,
-      pos3d: null, gesture, isGrab });
+      pos3d: null, gesture, isGrab
+    });
 
-    // ── Wrist orientation & finger metrics (from world landmarks) ──────────────
+    // Orientation metrics (optional)
     if (wLm && wLm.length === 21) {
-      // wLm space: x=right, y=down, z=depth-from-wrist → convert to y-up
       const toYup = v => ({ x: v.x, y: -v.y, z: -v.z });
-      const fwd  = vnorm(vsub(wLm[9],  wLm[0]));   // wrist → middle-MCP
-      const side = vnorm(vsub(wLm[17], wLm[5]));   // index-MCP → pinky-MCP
-      allHandData[h].palmNormal  = vfmt(toYup(vnorm(vcross(fwd, side))));
-      allHandData[h].fingerDir   = vfmt(toYup(fwd));
-      allHandData[h].fingerCurl  = FINGER_JOINTS.map(([base, pip, , tip]) => {
+      const fwd = vnorm(vsub(wLm[9], wLm[0]));
+      const side = vnorm(vsub(wLm[17], wLm[5]));
+      allHandData[h].palmNormal = vfmt(toYup(vnorm(vcross(fwd, side))));
+      allHandData[h].fingerDir = vfmt(toYup(fwd));
+      allHandData[h].fingerCurl = FINGER_JOINTS.map(([base, pip, , tip]) => {
         const cosA = vdot(vnorm(vsub(wLm[pip], wLm[base])), vnorm(vsub(wLm[tip], wLm[pip])));
-        return +((1 - cosA) / 2).toFixed(3);  // 0=straight, 1=fully curled
+        return +((1 - cosA) / 2).toFixed(3);
       });
-      // Distance from thumb tip to each other fingertip (cm)
       allHandData[h].pinchCm = [8, 12, 16, 20].map(i => +(Math.hypot(
         (wLm[i].x - wLm[4].x) * 100,
         (wLm[i].y - wLm[4].y) * 100,
-        (wLm[i].z - wLm[4].z) * 100,
+        (wLm[i].z - wLm[4].z) * 100
       )).toFixed(1));
     }
   }
 
-  // Update orbit target
+  // Update orbit target (use body center if no hands)
   if (allHandData.length > 0) {
     const n = allHandData.length;
     const avgX = allHandData.reduce((s, d) => s + d.wristXcm, 0) / n;
     const avgY = allHandData.reduce((s, d) => s + d.wristYcm, 0) / n;
     const avgZ = allHandData.reduce((s, d) => s + d.wristZcm, 0) / n;
     _orbitTarget.set(avgX * CM_SCALE, avgY * CM_SCALE, -avgZ * CM_SCALE);
+  } else if (currentBodyMetrics && currentBodyMetrics.shoulder_L && currentBodyMetrics.shoulder_R) {
+    const [lx, ly, lz] = currentBodyMetrics.shoulder_L;
+    const [rx, ry, rz] = currentBodyMetrics.shoulder_R;
+    const midX = (lx + rx) / 2;
+    const midY = (ly + ry) / 2;
+    const midZ = (lz + rz) / 2;
+    _orbitTarget.set(midX * CM_SCALE, midY * CM_SCALE, -midZ * CM_SCALE);
   }
 
-  // ── Absolute 3D positions (camera frame → Three.js) ─────────────────────────
-  // Camera is at origin. Real camera: x=right, y=up, z=depth(+away).
-  // Three.js: x=right, y=up, z=toward viewer (+) → depth maps to -Z.
+  // ── 3D updates for hands (only for those we actually processed) ───────────
   const allPos3d = [];
-  for (let h = 0; h < numHands; h++) {
-    const { pos_cm, wLm: hWLm, gesture, isGrab } = allHandData[h];
-    const palette = HAND_PALETTE[h] ?? HAND_PALETTE[0];
+  for (let h = 0; h < maxDisplayHands; h++) {
+    const handData = allHandData[h];
+    if (!handData) continue; // safety
 
+    const { pos_cm, wLm: hWLm, gesture, isGrab } = handData;
+    const palette = HAND_PALETTE[h];
     const pos3d = pos_cm.map(p => ({
-      x:  p.x * CM_SCALE,
-      y:  p.y * CM_SCALE,
-      z: -p.z * CM_SCALE,   // depth → -Z
+      x: p.x * CM_SCALE,
+      y: p.y * CM_SCALE,
+      z: -p.z * CM_SCALE,
     }));
     allPos3d.push(pos3d);
-    allHandData[h].pos3d = pos3d;
-    // Store real 3D wrist so body skeleton can connect to it
-    lastWrist3d[allHandData[h].handLabel] = pos3d[0];
+    handData.pos3d = pos3d;
+    lastWrist3d[handData.handLabel] = pos3d[0];
 
-    // ── Update Three.js spheres ─────────────────────────────────────────────
-    const jointColor = (i) => {
-      if (!TIPS.has(i)) return isGrab ? palette.grab : palette.normal;
-      const gc = { GRAB: palette.grab, OPEN: palette.open, POINT: palette.point, PEACE: palette.peace };
-      return gc[gesture] ?? palette.tip;
-    };
-    handJointMeshes[h].forEach((mesh, i) => {
-      mesh.visible = true;
-      mesh.position.set(pos3d[i].x, pos3d[i].y, pos3d[i].z);
-      mesh.material.color.setHex(jointColor(i));
-    });
+    // Joint spheres
+    const meshes = handJointMeshes[h];
+    if (meshes) {
+      meshes.forEach((mesh, i) => {
+        if (pos3d[i]) {
+          mesh.visible = true;
+          mesh.position.set(pos3d[i].x, pos3d[i].y, pos3d[i].z);
+          const jointColor = (i) => {
+            if (!TIPS.has(i)) return isGrab ? palette.grab : palette.normal;
+            const gc = { GRAB: palette.grab, OPEN: palette.open, POINT: palette.point, PEACE: palette.peace };
+            return gc[gesture] ?? palette.tip;
+          };
+          mesh.material.color.setHex(jointColor(i));
+        } else {
+          mesh.visible = false;
+        }
+      });
+    }
 
-    // ── Update bone lines ───────────────────────────────────────────────────
-    handBoneLines[h].forEach(({ line, a, b, mat }) => {
-      line.visible = true;
-      const attr = line.geometry.attributes.position;
-      attr.setXYZ(0, pos3d[a].x, pos3d[a].y, pos3d[a].z);
-      attr.setXYZ(1, pos3d[b].x, pos3d[b].y, pos3d[b].z);
-      attr.needsUpdate = true;
-      mat.color.setHex(isGrab ? palette.boneActive : palette.bone);
-    });
+    // Bone lines
+    const bones = handBoneLines[h];
+    if (bones) {
+      bones.forEach(({ line, a, b, mat }) => {
+        line.visible = true;
+        const attr = line.geometry.attributes.position;
+        attr.setXYZ(0, pos3d[a].x, pos3d[a].y, pos3d[a].z);
+        attr.setXYZ(1, pos3d[b].x, pos3d[b].y, pos3d[b].z);
+        attr.needsUpdate = true;
+        mat.color.setHex(isGrab ? palette.boneActive : palette.bone);
+      });
+    }
 
-    // ── Finger distance labels (wrist → each fingertip) ───────────────────
-    DIST_FINGER_PAIRS.forEach(([a, b], fi) => {
-      // World landmarks give stable distances — unaffected by depth noise during grab/curl
-      const distCm = hWLm && hWLm.length === 21
-        ? Math.hypot((hWLm[b].x - hWLm[a].x) * 100, (hWLm[b].y - hWLm[a].y) * 100, (hWLm[b].z - hWLm[a].z) * 100)
-        : Math.hypot(pos_cm[b].x - pos_cm[a].x, pos_cm[b].y - pos_cm[a].y, pos_cm[b].z - pos_cm[a].z);
-      const mid3d  = {
-        x: (pos3d[a].x + pos3d[b].x) / 2,
-        y: (pos3d[a].y + pos3d[b].y) / 2,
-        z: (pos3d[a].z + pos3d[b].z) / 2,
-      };
-      const lbl = handDistLabels[h][fi];
-      lbl.div.textContent = `${DIST_FINGER_NAMES[fi]} ${distCm.toFixed(1)}cm`;
-      lbl.obj.position.set(mid3d.x, mid3d.y, mid3d.z);
-      lbl.obj.visible = true;
-    });
+    // Distance labels
+    const labels = handDistLabels[h];
+    if (labels) {
+      DIST_FINGER_PAIRS.forEach(([a, b], fi) => {
+        const distCm = hWLm && hWLm.length === 21
+          ? Math.hypot((hWLm[b].x - hWLm[a].x) * 100, (hWLm[b].y - hWLm[a].y) * 100, (hWLm[b].z - hWLm[a].z) * 100)
+          : Math.hypot(pos_cm[b].x - pos_cm[a].x, pos_cm[b].y - pos_cm[a].y, pos_cm[b].z - pos_cm[a].z);
+        const mid3d = {
+          x: (pos3d[a].x + pos3d[b].x) / 2,
+          y: (pos3d[a].y + pos3d[b].y) / 2,
+          z: (pos3d[a].z + pos3d[b].z) / 2,
+        };
+        const lbl = labels[fi];
+        if (lbl) {
+          lbl.div.textContent = `${DIST_FINGER_NAMES[fi]} ${distCm.toFixed(1)}cm`;
+          lbl.obj.position.set(mid3d.x, mid3d.y, mid3d.z);
+          lbl.obj.visible = true;
+        }
+      });
+    }
   }
 
-  // Hide unused finger labels
-  for (let h = numHands; h < HAND_PALETTE.length; h++) {
-    handJointMeshes[h].forEach(m => { m.visible = false; });
-    handBoneLines[h].forEach(({ line }) => { line.visible = false; });
-    handDistLabels[h].forEach(l => { l.obj.visible = false; });
+  // Hide any leftover visual resources (for indices beyond maxDisplayHands)
+  for (let h = maxDisplayHands; h < HAND_PALETTE.length; h++) {
+    handJointMeshes[h]?.forEach(m => { m.visible = false; });
+    handBoneLines[h]?.forEach(({ line }) => { line.visible = false; });
+    handDistLabels[h]?.forEach(l => { l.obj.visible = false; });
   }
 
-  // ── Inter-hand distance label ──────────────────────────────────────────────
-  if (numHands === 2) {
+  // Inter‑hand distance label
+  if (allHandData.length === 2 && allPos3d.length === 2) {
     const w0 = allHandData[0], w1 = allHandData[1];
     const distCm = Math.hypot(
       w1.wristXcm - w0.wristXcm,
@@ -702,9 +838,11 @@ function onHandResults(results) {
   } else {
     interHandLabel.obj.visible = false;
   }
+
+  // Update gesture badge
   if (gestureTexts.length > 0) {
     const first = gestureTexts[0];
-    gestureEl.textContent    = numHands > 1
+    gestureEl.textContent = gestureTexts.length > 1
       ? gestureTexts.map(g => `${g.label}: ${g.gesture}`).join('  |  ')
       : first.gesture;
     gestureEl.style.background = GESTURE_COLOR[first.gesture] ?? '#888';
@@ -714,7 +852,7 @@ function onHandResults(results) {
     gestureEl.textContent = '';
   }
 
-  // ── Coordinates panel ───────────────────────────────────────────────────────
+  // Coordinates panel
   const coordsHtml = allHandData.map(({ handLabel, pos_cm }, h) => {
     const headerColor = h === 0 ? '#00ff88' : '#58a6ff';
     const cols = pos_cm.map((p, i) => {
@@ -729,10 +867,12 @@ function onHandResults(results) {
     return `<div class="coord-hand-label" style="color:${headerColor};writing-mode:vertical-rl;padding:4px 6px;font-size:10px;flex-shrink:0;border-right:1px solid #30363d;letter-spacing:1px;">${handLabel}</div>${cols.join('')}`;
   }).join('');
   coordsEl.innerHTML = coordsHtml || '<span class="no-hand">No hand detected</span>';
+    });
+    return `<div class="coord-hand-label" style="color:${headerColor};writing-mode:vertical-rl;padding:4px 6px;font-size:10px;flex-shrink:0;border-right:1px solid #30363d;letter-spacing:1px;">${handLabel}</div>${cols.join('')}`;
+  }).join('');
+  coordsEl.innerHTML = coordsHtml || '<span class="no-hand">No hand detected</span>';
 
-  // ── Robot data output ───────────────────────────────────────────────────────
-  // Self-describing frame: everything a robot controller needs, with explicit units,
-  // coordinate frame, and landmark names so the receiver never has to guess.
+  // ── ROBOT DATA (always built and sent) ─────────────────────────────────────
   const now = Date.now();
   _frameSeq++;
   _frameTimes.push(now);
@@ -742,77 +882,48 @@ function onHandResults(results) {
     : 0;
 
   const robotData = {
-    // ── Frame metadata ──
-    t:    now,                       // unix ms timestamp
-    seq:  _frameSeq,                 // monotonic frame counter; receiver detects drops
-    fps:  fpsMeasured,               // measured frame rate, sliding window of 30 frames
-
-    // ── Coordinate frame (the receiver MUST know this to interpret xyz correctly) ──
-    frame: {
-      origin: 'camera',              // all xyz are camera-frame, origin at the camera lens
-      x:      'right',               // +x is to the camera's right
-      y:      'up',                  // +y is up (image-y is down, we flip in projection)
-      z:      'away_from_camera',    // +z is depth into the scene; closer = smaller z
-      units:  'cm',                  // all linear values in centimetres
-    },
-
-    // ── Calibration snapshot (so the receiver can sanity-check scale) ──
+    t: now,
+    seq: _frameSeq,
+    fps: fpsMeasured,
+    frame: { origin: 'camera', x: 'right', y: 'up', z: 'away_from_camera', units: 'cm' },
     calibration: {
-      hand_size_cm:      +HAND_SIZE_CM.toFixed(2),
-      fov_deg:           +CAMERA_FOV_DEG.toFixed(1),
+      hand_size_cm: +HAND_SIZE_CM.toFixed(2),
+      fov_deg: +CAMERA_FOV_DEG.toFixed(1),
       shoulder_width_cm: +SHOULDER_WIDTH_CM.toFixed(1),
     },
-
-    // ── Per-hand data: ALWAYS two slots (Left, Right) so the receiver doesn't need
-    //    to track hand appear/disappear events. Missing hands are `present: false`. ──
-    hands: ['Left', 'Right'].map((slotLabel) => {
-      const hi = allHandData.findIndex(d => d.handLabel === slotLabel);
+    hands: ['Right', 'Left'].map((slotLabel) => {
+      const flipLabel = isMirrored ? slotLabel : (slotLabel === 'Left' ? 'Right' : 'Left');
+      const hi = allHandData.findIndex(d => d.handLabel === flipLabel);
       if (hi < 0) {
-        return { label: slotLabel, present: false };
+        return { label: flipLabel, present: false };
       }
       const { handLabel, depthCm, wristXcm, wristYcm, wristZcm, pos_cm,
               palmNormal, fingerDir, fingerCurl, pinchCm, gesture, isGrab } = allHandData[hi];
       return {
-        label:        handLabel,                   // "Left" or "Right" — from person's perspective
-        present:      true,
-        index:        hi,
-        // Confidence from MediaPipe (1.0 = certain, ~0.5 = tentative)
-        confidence:   results.multiHandedness?.[hi]?.score ?? null,
-
-        // Depth
-        depth_cm:     +depthCm.toFixed(1),         // wrist → camera distance
-
-        // Wrist 3D position (end-effector target for robot arm)
-        wrist_cm:     { x: +wristXcm.toFixed(2), y: +wristYcm.toFixed(2), z: +wristZcm.toFixed(2) },
-
-        // Hand orientation (unit vectors, y-up camera frame)
-        palm_normal:  palmNormal,                  // ⊥ to palm, points OUT of palm
-        finger_dir:   fingerDir,                   // wrist → middle-MCP (where fingers point)
-
-        // Finger state
-        finger_curl:  fingerCurl,                  // [thumb,index,middle,ring,pinky]; 0=straight 1=curled
-        pinch_cm:     pinchCm,                     // [idx,middle,ring,pinky] tip→thumb-tip distance (cm)
-        grip_aperture_cm: pinchCm?.[0] ?? null,    // thumb↔index — primary grasp metric
-
-        // High-level command
-        gesture:      gesture,                     // "GRAB"|"OPEN"|"POINT"|"PEACE"|null
-        gesture_id:   gesture ? GESTURE_ID[gesture] ?? 0 : 0,  // 0=none, 1-4 above
-        is_grab:      isGrab,                      // boolean convenience
+        label: flipLabel,
+        present: true,
+        index: hi,
+        confidence: results.multiHandedness?.[hi]?.score ?? null,
+        depth_cm: +depthCm.toFixed(1),
+        wrist_cm: { x: +wristXcm.toFixed(2), y: +wristYcm.toFixed(2), z: +wristZcm.toFixed(2) },
+        palm_normal: palmNormal,
+        finger_dir: fingerDir,
+        finger_curl: fingerCurl,
+        pinch_cm: pinchCm,
+        grip_aperture_cm: pinchCm?.[0] ?? null,
+        gesture: gesture,
+        gesture_id: gesture ? GESTURE_ID[gesture] ?? 0 : 0,
+        is_grab: isGrab,
+        joints_cm: pos_cm.map(p => ({ x: +p.x.toFixed(2), y: +p.y.toFixed(2), z: +p.z.toFixed(2) })),
       };
     }),
-
-    // ── Body landmarks (upper body) in cm ──
-    body: currentBodyMetrics,                     // { shoulder_L: [x,y,z], … } see BODY_LANDMARK_NAMES
-
-    // ── Self-describing landmark name tables ──
-    // Receiver can use these to know that `hands[0].joints_cm[5]` corresponds to INDEX_MCP.
+    body: currentBodyMetrics,
     landmark_names: {
-      hand_joints: LANDMARK_NAMES,                // 21 names matching `hands[i].joints_cm[i]`
-      body_joints: BODY_LANDMARK_NAMES,           // names for indices used in `body`
+      hand_joints: LANDMARK_NAMES,
+      body_joints: BODY_LANDMARK_NAMES,
     },
   };
 
-  // Inter-hand distance (when both hands are visible)
   if (allHandData.length === 2) {
     const a = allHandData[0], b = allHandData[1];
     robotData.interhand_cm = +Math.hypot(
@@ -823,23 +934,17 @@ function onHandResults(results) {
   window.__handRobotData = robotData;
   window.dispatchEvent(new CustomEvent('hand-robot-data', { detail: robotData }));
   robotSocket.send(robotData);
-
   if (robotOut) {
     const fmt = (p) => `(${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)})`;
     const handLines = allHandData.map(d => {
       const p3 = d.pos3d;
       if (!p3) return '';
       return [
-        `=== ${d.handLabel} ===`,
-        `wrist[0]:      ${fmt(p3[0])}`,
-        `index_mcp[5]:  ${fmt(p3[5])}`,
-        `middle_tip[12]:${fmt(p3[12])}`,
-        `dir wrist→tip: (${(p3[12].x-p3[0].x).toFixed(2)}, ${(p3[12].y-p3[0].y).toFixed(2)}, ${(p3[12].z-p3[0].z).toFixed(2)})`,
+        ''
       ].join('\n');
     });
     robotOut.style.whiteSpace = 'pre';
     robotOut.style.fontSize   = '10px';
-    robotOut.textContent = handLines.join('\n\n') + '\n\n' + (window.__bodyDbg ?? '');
   }
 }
 
@@ -872,7 +977,7 @@ function onPoseResults(results) {
     const relZcm = (wPose && wPose[idx]) ? wPose[idx].z * 100 : 0;
     const jd     = bodyDepthCm + relZcm;
     return {
-      x:  mirX * (lm2d.x - 0.5) / f_norm * jd * CM_SCALE,
+      x: (lm2d.x - 0.5) / f_norm * jd * CM_SCALE,
       y: -(lm2d.y - 0.5) / f_norm * jd * CM_SCALE,
       z: -jd * CM_SCALE,
     };
@@ -903,7 +1008,7 @@ function onPoseResults(results) {
   const f3 = (p) => `(${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)})`;
   const fw = (w) => w ? `(${w.x.toFixed(3)},${w.y.toFixed(3)},${w.z.toFixed(3)})` : 'n/a';
   const bnames = { 11:'shldr_L', 12:'shldr_R', 13:'elbow_L', 14:'elbow_R', 15:'wrist_L', 16:'wrist_R' };
-  window.__bodyDbg = `=== BODY  depth=${bodyDepthCm.toFixed(1)}cm mirX=${mirX} ===\n`
+  window.__bodyDbg = `=== BODY  depth=${bodyDepthCm.toFixed(1)}cm mirX=${isMirrored} ===\n`
     + Object.entries(bnames).map(([i,n]) =>
         `  ${n.padEnd(8)} ${f3(bodyPos3d[+i])}  raw:${fw(wPose?.[+i])}`
     ).join('\n');
@@ -941,9 +1046,9 @@ const hands = new window.Hands({
 });
 hands.setOptions({
   maxNumHands: 2,
-  modelComplexity: 1,
-  minDetectionConfidence: 0.5,
-  minTrackingConfidence: 0.5,
+  modelComplexity: 0,
+  minDetectionConfidence: 0.1,
+  minTrackingConfidence: 0.1,
 });
 hands.onResults(onHandResults);
 
@@ -952,11 +1057,11 @@ const pose = new window.Pose({
   locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${f}`,
 });
 pose.setOptions({
-  modelComplexity: 0,
+  modelComplexity: 2,
   smoothLandmarks: true,
   enableSegmentation: false,
-  minDetectionConfidence: 0.5,
-  minTrackingConfidence: 0.5,
+  minDetectionConfidence: 0.1,
+  minTrackingConfidence: 0.1,
 });
 pose.onResults(onPoseResults);
 
@@ -983,7 +1088,7 @@ async function startWebcam() {
   statusEl.textContent = 'Requesting camera…';
   try {
     webcamStream = await navigator.mediaDevices.getUserMedia({
-      video: { width: 1280, height: 720, facingMode: 'user' },
+      video: { width: 1920, height: 1080, facingMode: 'user' },
     });
     video.srcObject = webcamStream;
     video.src = '';
@@ -995,8 +1100,8 @@ async function startWebcam() {
         await hands.send({ image: video });
         if (++_poseFrame % 3 === 0) await pose.send({ image: video });
       },
-      width: 1280,
-      height: 720,
+      width: 1920,
+      height: 1080,
     });
     mpCamInstance.start();
     statusEl.textContent = 'Waiting for hand…';
@@ -1131,12 +1236,27 @@ if (btnWs) {
     if (robotSocket._enabled) {
       robotSocket.disconnect();
     } else {
-      const url = wsUrlInput?.value.trim() || 'ws://localhost:8765';
+      // If URL is empty, default to port 9090 for ROS, or 8765 for plain
+      const defaultPort = robotSocket._mode === 'ros' ? 'ws://localhost:9090' : 'ws://localhost:8765';
+      const url = wsUrlInput?.value.trim() || defaultPort;
       lsSet('ht_wsUrl', url);
       robotSocket.connect(url);
     }
   });
 }
-
+// --- 2. The "ROS" button acts purely as a format toggle ---
+if (btnModeRos) {
+  btnModeRos.addEventListener('click', () => {
+    const isCurrentlyRos = robotSocket._mode === 'ros';
+    const newMode = isCurrentlyRos ? 'raw' : 'ros';
+    
+    // Update the socket mode
+    robotSocket.setMode(newMode);
+    
+    // Update the button UI to show it's active
+    btnModeRos.classList.toggle('active', !isCurrentlyRos);
+    btnModeRos.textContent = !isCurrentlyRos ? 'ROS ✓' : 'ROS';
+  });
+}
 // ─── Start with webcam by default ────────────────────────────────────────────
 startWebcam();
