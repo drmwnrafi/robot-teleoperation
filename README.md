@@ -1,274 +1,246 @@
-# 3D Hand Tracker — Robot Teleoperation
+# Hand & Body Tracker
 
-Real-time hand tracking in the browser that streams 3D joint coordinates to a robot via WebSocket. Uses [MediaPipe Hands](https://mediapipe.dev) for landmark detection, [Three.js](https://threejs.org) for 3D visualization, and a built-in WebSocket client for robot integration.
+Web app that takes a camera feed (or a video file), detects hands + upper body via
+MediaPipe, and pushes a JSON frame over WebSocket every ~33 ms. Intended for
+teleoperating a robot arm in real time.
 
-```
-Camera → MediaPipe (21 landmarks) → Gesture detection → WebSocket → Your robot
-                                   ↘ Three.js 3D view
-```
+## Demo
 
----
+<video src="https://github.com/user-attachments/assets/14bf5437-a007-4f30-be92-aae054092e56" controls width="100%"></video>
 
-## Features
 
-| Feature | Description |
-|---------|-------------|
-| 21 joint 3D tracking | Full hand skeleton in centimetres (camera frame) |
-| Depth estimation | Pinhole-model depth from apparent hand size |
-| Gesture detection | **GRAB**, **OPEN**, **POINT**, **PEACE** |
-| WebSocket output | ~30 fps JSON frames to any server |
-| Video file mode | Test with pre-recorded `.mp4` / `.webm` files |
-| Calibration | Hand size + camera FOV, saved to `localStorage` |
 
----
+
+
+
 
 ## Requirements
 
-- **Node.js 18+** ([download for Windows](https://nodejs.org/en/download))  
-- A modern browser: Chrome 90+, Edge 90+, Firefox 90+  
-- A webcam (or a video file for offline testing)  
-- **WSL is NOT required** — runs 100% on native Windows
+- Node.js 18+
+- A modern browser: Chrome / Edge / Firefox (latest)
+- A webcam or a video file
 
----
+## Running
 
-## Installation (Windows, no WSL)
-
-### 1. Install Node.js
-
-Download and install from https://nodejs.org (LTS version).  
-After installing, open **PowerShell** or **Command Prompt** and verify:
-
-```powershell
-node -v   # should print v18.x.x or higher
-npm -v    # should print 9.x.x or higher
-```
-
-### 2. Clone and install dependencies
-
-```powershell
-git clone https://github.com/obotx/robot-teleoperation.git
-cd robot-teleoperation
+```bash
 npm install
+npm run dev        # → http://localhost:5173
 ```
 
-### 3. Start the development server
+For a production build: `npm run build` (output in `dist/`).
 
-```powershell
-npm run dev
-```
+## Calibration
 
-You will see output like:
+Three fields at the top of the page. They persist in `localStorage`.
 
-```
-  VITE v5.x  ready in xxx ms
-  ➜  Local:   http://localhost:5173/
-  ➜  Network: http://192.168.x.x:5173/
-```
+| Field | What it is | Typical values |
+|-------|-----------|----------------|
+| Hand size | Wrist-crease to base-of-middle-finger distance (cm) | 7–12 cm (adult ≈ 9) |
+| Shoulder | Across-the-shoulder width (cm) | 35–50 cm |
+| Cam FOV | Camera horizontal field-of-view (°) | USB webcam 60–70, laptop 65–75, phone back 70–80, phone front 85–100, ultra-wide 100–120 |
 
-### 4. Open the app
+Quick FOV dial-in: hold a ruler exactly **30 cm** from the camera, flat to the
+image plane. Watch the `Depth` reading. If it says 30, FOV is correct. If it says
+60, double FOV. If it says 15, halve FOV.
 
-Open **http://localhost:5173** in your browser.  
-Allow camera access when prompted.
+## WebSocket
 
----
+Enter the server URL in the `WS` field (default `ws://localhost:8765`), click
+`Connect`. The dot turns green when connected. Auto-reconnect with exponential
+backoff, up to 10 attempts.
 
-## Running without a dev server (production build)
+### Message format
 
-```powershell
-npm run build    # creates dist/ folder
-npm run preview  # serves dist/ locally
-```
+Text WebSocket, JSON, UTF-8. One frame every ~33 ms (≈30 fps). Browser sends only,
+doesn't receive.
 
-Or deploy the `dist/` folder to any static hosting (GitHub Pages, Netlify, etc.).
-
----
-
-## Usage Guide
-
-### Camera mode (default)
-- App starts with your webcam automatically
-- Hold your hand in front of the camera, palm facing the lens
-- The left panel shows the 2D overlay; the right panel shows the 3D skeleton
-
-### Video file mode
-- Click **📁 Video** to load a `.mp4` or `.webm` file
-- Use the playback bar to pause / seek / change speed
-
-### Calibration
-| Field | What it does | Default |
-|-------|-------------|---------|
-| Hand size (cm) | Physical wrist→middle-MCP distance | 9.0 cm (adult average) |
-| Cam FOV (°) | Camera horizontal field of view | 62° (typical USB webcam) |
-
-Settings are saved automatically to `localStorage`.
-
-### Gestures
-| Gesture | Description | Colour |
-|---------|-------------|--------|
-| **GRAB** | Fist (all 4 fingers curled) | Red |
-| **OPEN** | All 4 fingers extended | Green |
-| **POINT** | Only index extended | Blue |
-| **PEACE** | Index + middle extended (V sign) | Yellow |
-
-### WebSocket connection
-1. Enter your server URL in the **WS:** field (default `ws://localhost:8765`)
-2. Click **Connect**
-3. The dot turns **green** when connected, **yellow** while connecting, **red** on error
-4. Auto-reconnects with exponential back-off (up to 10 attempts)
-
----
-
-## WebSocket Data Format
-
-Every ~33 ms (≈30 fps) the app sends a JSON frame:
-
-```json
+```jsonc
 {
-  "t": 1748448000000,
-  "depth_cm": 45.2,
-  "wrist_cm": { "x": 1.23, "y": -0.50, "z": 45.20 },
-  "joints_cm": [
-    [x0, y0, z0],
-    [x1, y1, z1],
-    "...21 joints total..."
+  "t":   1717361234567,   // unix-ms
+  "seq": 12345,            // monotonic frame counter
+  "fps": 29.4,             // current frame rate
+
+  "frame": {               // coordinate system description — receiver needs this
+    "origin": "camera",
+    "x": "right",
+    "y": "up",
+    "z": "away_from_camera",
+    "units": "cm"
+  },
+
+  "calibration": {         // what values are currently set
+    "hand_size_cm": 9.0,
+    "fov_deg": 88.0,
+    "shoulder_width_cm": 42.0
+  },
+
+  "hands": [               // ALWAYS 2 slots: [Left, Right]
+    {
+      "label": "Left",
+      "present": true,     // if false — no other fields
+      "index": 0,
+      "confidence": 0.94,  // 0..1 from MediaPipe
+
+      "depth_cm": 87.4,    // wrist → camera distance
+
+      "wrist_cm": { "x": 1.23, "y": -0.50, "z": 87.41 },
+
+      "palm_normal": [0.01, -0.04, 0.99],  // unit vec ⊥ palm, points OUT of palm
+      "finger_dir":  [0.05,  0.81, 0.58],  // unit vec wrist → middle-MCP
+
+      "finger_curl":     [0.05, 0.10, 0.12, 0.60, 0.72],  // [thumb, idx, mid, ring, pinky], 0=straight 1=fully curled
+      "pinch_cm":        [4.2, 7.1, 6.9, 6.5],             // tip→thumb-tip per finger
+      "grip_aperture_cm": 4.2,                             // thumb↔index
+
+      "gesture":     "GRAB",    // "GRAB" | "OPEN" | "POINT" | "PEACE" | null
+      "gesture_id":  1,          // 0=none, 1=GRAB, 2=OPEN, 3=POINT, 4=PEACE
+      "is_grab":     true
+    },
+    { "label": "Right", "present": false }
   ],
-  "gesture": "GRAB",
-  "is_grab": true
+
+  "interhand_cm": 41.2,    // only when both hands are visible
+
+  "body": {                // always 6 points when MediaPipe Pose sees the body
+    "shoulder_L": [-12.4, 3.1, -120.5],
+    "shoulder_R": [11.8, 2.9, -120.1],
+    "elbow_L":    [-18.7, -9.2, -110.0],
+    "elbow_R":    [16.4, -8.8, -109.5],
+    "wrist_L":    [1.23, -0.50, -87.41],  // == hands[Left].wrist_cm (always equal)
+    "wrist_R":    [-1.32, -1.46, -88.10]
+  },
+
+  "landmark_names": {
+    "hand_joints": [
+      "WRIST",
+      "THUMB_CMC","THUMB_MCP","THUMB_IP","THUMB_TIP",
+      "INDEX_MCP","INDEX_PIP","INDEX_DIP","INDEX_TIP",
+      "MIDDLE_MCP","MIDDLE_PIP","MIDDLE_DIP","MIDDLE_TIP",
+      "RING_MCP","RING_PIP","RING_DIP","RING_TIP",
+      "PINKY_MCP","PINKY_PIP","PINKY_DIP","PINKY_TIP"
+    ],
+    "body_joints": {
+      "0": "nose",
+      "11": "shoulder_L", "12": "shoulder_R",
+      "13": "elbow_L",    "14": "elbow_R",
+      "15": "wrist_L",    "16": "wrist_R",
+      "23": "hip_L",      "24": "hip_R"
+    }
+  }
 }
 ```
 
-**Coordinate system** (camera frame):
-- `x` — right is positive  
-- `y` — up is positive  
-- `z` — depth away from lens is positive  
-- Joint order follows [MediaPipe landmark indices](https://developers.google.com/mediapipe/solutions/vision/hand_landmarker#models)
+### Things worth knowing
 
----
+1. Everything is in **centimetres** in camera frame. Multiply by 0.01 to get metres.
+2. `body.wrist_L` and `hands[Left].wrist_cm` are the **same point**. The body wrist
+   is overwritten with the hand wrist every frame so the arm bone meets the hand.
+3. `label` is from the person's perspective, not the screen. In mirrored webcam
+   mode, the "Left" hand appears on the right side of the screen — that's normal.
+4. `hands` always has 2 elements in fixed order [Left, Right]. Missing hand =
+   `{"label": "Right", "present": false}` with no other fields.
+5. `seq` is monotonically increasing. Receiver detects drops: `received - expected`.
+   `t` is wall-clock, not for ordering.
+6. For the end-effector: `wrist_cm` (position) + `palm_normal` & `finger_dir`
+   (orientation). Their cross = third axis → full gripper orientation.
+7. For the gripper: `grip_aperture_cm` (0 = closed, 8–10 = open) or `is_grab` boolean.
+8. For high-level commands: `gesture` (string) or `gesture_id` (0..4).
 
-## Example: Python WebSocket server
-
-Minimal server that receives hand data (no WSL needed — runs on Windows Python):
+### If the robot is in a different coordinate frame
 
 ```python
-# pip install websockets
+# p_cam in camera frame, cm
+p_cam = [hand.wrist_cm.x, hand.wrist_cm.y, hand.wrist_cm.z]
+
+# T_cam_to_base — 4x4 matrix camera → robot base.
+# Measure once (hand-eye calibration).
+import numpy as np
+T = np.array([...])  # fill in
+p_base = T @ np.append(p_cam, 1.0)
+```
+
+For orientation: build a matrix from `palm_normal` (Z), `finger_dir` (Y), and their
+cross (X), then multiply by T.
+
+## Example: Python server
+
+```bash
+pip install websockets
+```
+
+```python
+# server.py
 import asyncio, json
 import websockets
 
-async def handler(websocket):
-    print("Client connected")
-    async for message in websocket:
-        data = json.loads(message)
-        wrist = data["wrist_cm"]
-        gesture = data.get("gesture")
-        print(f"wrist=({wrist['x']:.1f}, {wrist['y']:.1f}, {wrist['z']:.1f}) cm  gesture={gesture}")
+async def handler(ws):
+    print(f"Connected: {ws.remote_address}")
+    last_seq = -1
+    async for raw in ws:
+        data = json.loads(raw)
+        if last_seq >= 0 and data["seq"] != last_seq + 1:
+            print(f"!! dropped {last_seq+1}..{data['seq']-1}")
+        last_seq = data["seq"]
+
+        print(f"\n[seq={data['seq']} fps={data['fps']}]")
+        for hand in data["hands"]:
+            if not hand["present"]:
+                print(f"  {hand['label']}: ABSENT")
+                continue
+            w = hand["wrist_cm"]
+            print(f"  {hand['label']:5} conf={hand['confidence']:.2f}  "
+                  f"wrist=({w['x']:6.2f}, {w['y']:6.2f}, {w['z']:6.2f})cm  "
+                  f"grip={hand['grip_aperture_cm']}cm  gesture={hand.get('gesture')}")
 
 async def main():
-    async with websockets.serve(handler, "localhost", 8765):
-        print("WebSocket server on ws://localhost:8765")
-        await asyncio.Future()  # run forever
+    async with websockets.serve(handler, "0.0.0.0", 8765):
+        print("ws://0.0.0.0:8765")
+        await asyncio.Future()
 
 asyncio.run(main())
 ```
 
-Run it with:
-```powershell
-pip install websockets
-python server.py
-```
+Run: `python server.py`. In the browser, set `ws://localhost:8765` and click
+`Connect`.
 
----
-
-## Example: ROS 2 bridge
-
-If you use ROS 2 on a separate machine, use `rosbridge_server`:
+## Example: ROS 2
 
 ```bash
 ros2 launch rosbridge_server rosbridge_websocket_launch.xml
 ```
 
-Then set the WS URL in the browser to `ws://<robot-ip>:9090`.
+In the browser: `ws://<robot-ip>:9090`. On the ROS side, subscribe to the WebSocket
+and republish into a ROS topic.
 
-The JSON frame can be republished as a custom ROS message or decoded inline in a `rosbridge` subscriber.
-
----
-
-## Possible Problems & Solutions
-
-### Camera not starting
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| "Camera error: Permission denied" | Browser blocked camera access | Click the camera icon in the address bar → Allow |
-| "Camera error: Requested device not found" | No webcam connected | Plug in a webcam or use Video File mode |
-| Black video, no tracking | Camera used by another app | Close Zoom, Teams, OBS, etc. |
-| Camera works in Chrome but not Edge | Old Edge version | Update Edge / use Chrome |
-
-### MediaPipe not loading
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| Status stuck at "Loading MediaPipe…" | CDN blocked / no internet | Check firewall; try VPN; or self-host the `.wasm` files |
-| Console: "Hands is not a constructor" | Script load order issue | Reload the page; check CDN availability |
-| Very slow first load | WASM files downloading (~10 MB) | Normal on first visit; cached afterwards |
-
-### Vite / npm issues
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| `npm install` fails with EACCES | Permission error | Run PowerShell as Administrator |
-| `'vite' is not recognized` | node_modules not installed | Run `npm install` first |
-| Port 5173 already in use | Another Vite instance running | Run `npm run dev -- --port 5174` |
-| `npm run dev` hangs | Antivirus blocking Node.js | Add project folder to AV exclusions |
-| Module not found: three | dependencies not installed | Delete `node_modules/` and run `npm install` again |
-
-### WebSocket
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| Dot stays yellow forever | Server not running | Start your Python/ROS server first |
-| "Error — retrying" after 10 attempts | Server URL wrong or server crashed | Check URL, restart server, click Connect again |
-| HTTPS site → WS blocked | Browser blocks `ws://` on HTTPS | Use `wss://` with a TLS server, or run app on `http://` |
-
-### Tracking quality
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| Depth value jumps | Incorrect hand size calibration | Measure your wrist→middle-MCP distance and enter it |
-| Skeleton flickers | Poor lighting | Add a light source in front of you |
-| Gestures not recognized | Ambiguous hand pose | Move to a clear GRAB / OPEN / POINT / PEACE position |
-| Tracking lost frequently | Background clutter | Use a plain background or better lighting |
-
----
-
-## Project Structure
-
-```
-robot-teleoperation/
-├── index.html        # UI layout and styles
-├── src/
-│   └── main.js       # Three.js, MediaPipe, gestures, WebSocket
-├── package.json      # Vite + three.js dependencies
-└── README.md
-```
-
----
-
-## Browser API (no server needed)
-
-If you prefer to consume data within the same browser tab:
+## In-page API (no server needed)
 
 ```js
+// Push event
 window.addEventListener('hand-robot-data', (e) => {
-  const { wrist_cm, gesture, joints_cm } = e.detail;
-  // drive your in-page robot simulation here
+  const { hands, body, frame, calibration } = e.detail;
 });
 
-// Or poll the latest frame:
+// Or just the latest frame
 const latest = window.__handRobotData;
 ```
 
----
+## Troubleshooting
 
-## License
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Depth 60 at real 30 cm | FOV too narrow | Double FOV |
+| Depth 15 at real 30 cm | FOV too wide | Halve FOV |
+| Body 130, hand 80 | Normal — hand is in front of body | Re-verify FOV with the 30 cm ruler |
+| Hand "goes behind" body in 3D | MediaPipe briefly glitches during occlusion | Already handled (clamp to body depth) |
+| Gesture flickers | Pose is borderline | Hold a clearer GRAB/OPEN/POINT/PEACE position |
+| Depth jumps around | FOV or hand size wrong | Re-check 30 cm ruler + measure your hand |
 
-MIT
+## Structure
+
+```
+hand-tracker/
+├── index.html
+├── src/main.js
+├── package.json
+└── README.md
+```

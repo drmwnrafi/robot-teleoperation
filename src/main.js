@@ -314,6 +314,14 @@ labelRenderer.domElement.style.left = '0';
 labelRenderer.domElement.style.pointerEvents = 'auto'; // needed for OrbitControls on front view
 threePanel.appendChild(labelRenderer.domElement);
 
+// CSS2D label renderer (overlaid on top of the WebGL canvas for distance text)
+const labelRenderer = new CSS2DRenderer();
+labelRenderer.domElement.style.position = 'absolute';
+labelRenderer.domElement.style.top = '0';
+labelRenderer.domElement.style.left = '0';
+labelRenderer.domElement.style.pointerEvents = 'auto'; // needed for OrbitControls on front view
+threePanel.appendChild(labelRenderer.domElement);
+
 const scene  = new THREE.Scene();
 // Front view camera — interactive (OrbitControls). Starts near real-camera viewpoint.
 // Far plane = 200 scene units = 2000 cm = 20 m, well beyond any realistic body depth.
@@ -341,6 +349,7 @@ const _orbitTarget = new THREE.Vector3(0, 0, -4.5);
 scene.add(new THREE.AmbientLight(0xffffff, 0.7));
 const dirLight = new THREE.DirectionalLight(0x00ff88, 2.5);
 dirLight.position.set(0.2, 0.3, -0.4);
+dirLight.position.set(0.2, 0.3, -0.4);
 scene.add(dirLight);
 
 // Axis helper placed at a typical hand depth (0.6 m = 60 cm)
@@ -353,21 +362,30 @@ const HAND_PALETTE = [
   { normal: 0x00ff88, tip: 0xffff00, grab: 0xff4444, open: 0x00ff88, point: 0x58a6ff, peace: 0xf0b429, bone: 0x00aa55, boneActive: 0xaa2222 },
   { normal: 0x58a6ff, tip: 0xffa500, grab: 0xff8800, open: 0x58a6ff, point: 0xff88ff, peace: 0xffbb44, bone: 0x2255aa, boneActive: 0xaa6600 },
 ];
+// Axis helper placed at a typical hand depth (0.6 m = 60 cm)
+const axesHelper = new THREE.AxesHelper(0.05);
+axesHelper.position.set(0, 0, -0.6);
+scene.add(axesHelper);
 
+// ── Per-hand colour palettes ──
+const HAND_PALETTE = [
+  { normal: 0x00ff88, tip: 0xffff00, grab: 0xff4444, open: 0x00ff88, point: 0x58a6ff, peace: 0xf0b429, bone: 0x00aa55, boneActive: 0xaa2222 },
+  { normal: 0x58a6ff, tip: 0xffa500, grab: 0xff8800, open: 0x58a6ff, point: 0xff88ff, peace: 0xffbb44, bone: 0x2255aa, boneActive: 0xaa6600 },
+];
+
+// ── 21 joint spheres × 2 hands ──
 // ── 21 joint spheres × 2 hands ──
 const GEO_JOINT = new THREE.SphereGeometry(0.03, 10, 10);
 const GEO_TIP   = new THREE.SphereGeometry(0.048, 10, 10);
-const handJointMeshes = HAND_PALETTE.map(palette =>
-  Array.from({ length: 21 }, (_, i) => {
-    const m = new THREE.Mesh(
-      TIPS.has(i) ? GEO_TIP : GEO_JOINT,
-      new THREE.MeshStandardMaterial({ color: palette.normal })
-    );
-    m.visible = false;
-    scene.add(m);
-    return m;
-  })
+const jointMats = Array.from({ length: 21 }, () =>
+  new THREE.MeshStandardMaterial({ color: 0x00ff88 })
 );
+const jointMeshes = Array.from({ length: 21 }, (_, i) => {
+  const m = new THREE.Mesh(TIPS.has(i) ? GEO_TIP : GEO_JOINT, jointMats[i]);
+  m.visible = false;
+  scene.add(m);
+  return m;
+});
 
 // ── Bone lines × 2 hands ──
 const handBoneLines = HAND_PALETTE.map(palette =>
@@ -382,6 +400,40 @@ const handBoneLines = HAND_PALETTE.map(palette =>
     return { line, a, b, mat };
   })
 );
+
+// ── Distance labels in 3D ──
+// Per hand: wrist→tip for all 5 fingers; inter-hand: wrist-to-wrist.
+const DIST_FINGER_PAIRS = [[0,4],[0,8],[0,12],[0,16],[0,20]];
+const DIST_FINGER_NAMES = ['Thumb','Index','Middle','Ring','Pinky'];
+
+function makeDistLabel(color = '#ffffff') {
+  const div = document.createElement('div');
+  div.style.cssText = `font-size:10px;font-family:Consolas,monospace;color:${color};
+    background:rgba(13,17,23,0.75);padding:1px 5px;border-radius:3px;
+    white-space:nowrap;pointer-events:none;letter-spacing:0.5px;`;
+  const obj = new CSS2DObject(div);
+  obj.visible = false;
+  scene.add(obj);
+  return { obj, div };
+}
+
+// [hand0: 5 finger labels], [hand1: 5 finger labels], [inter-hand label]
+const handDistLabels = HAND_PALETTE.map((p, h) =>
+  DIST_FINGER_NAMES.map(() => makeDistLabel(h === 0 ? '#00ff88' : '#58a6ff'))
+);
+const interHandLabel = makeDistLabel('#f0b429');
+
+// ── Body skeleton (MediaPipe Pose upper body) ──
+const bodyBoneLines = POSE_UPPER.map(() => {
+  const geo = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(), new THREE.Vector3(),
+  ]);
+  const mat = new THREE.LineBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.7 });
+  const line = new THREE.Line(geo, mat);
+  line.visible = false;
+  scene.add(line);
+  return { line };
+});
 
 // ── Distance labels in 3D ──
 // Per hand: wrist→tip for all 5 fingers; inter-hand: wrist-to-wrist.
@@ -811,6 +863,10 @@ function onHandResults(results) {
         <span class="axis">y:<b>${p.y.toFixed(1)}</b></span>
         <span class="axis">z:<b>${p.z.toFixed(1)}</b></span>
       </div>`;
+    });
+    return `<div class="coord-hand-label" style="color:${headerColor};writing-mode:vertical-rl;padding:4px 6px;font-size:10px;flex-shrink:0;border-right:1px solid #30363d;letter-spacing:1px;">${handLabel}</div>${cols.join('')}`;
+  }).join('');
+  coordsEl.innerHTML = coordsHtml || '<span class="no-hand">No hand detected</span>';
     });
     return `<div class="coord-hand-label" style="color:${headerColor};writing-mode:vertical-rl;padding:4px 6px;font-size:10px;flex-shrink:0;border-right:1px solid #30363d;letter-spacing:1px;">${handLabel}</div>${cols.join('')}`;
   }).join('');

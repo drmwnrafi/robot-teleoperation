@@ -8,6 +8,7 @@
   <!-- MediaPipe from CDN (globals: Hands, Camera, HAND_CONNECTIONS) -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
 
   <style>
     *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
@@ -306,8 +307,12 @@
     <input id="hand-size-input" type="number" step="0.5" min="4" max="20" value="9" title="Wrist → Middle-MCP physical distance cm (avg adult ≈ 9 cm)" />
     <span class="calib-unit">cm</span>
     <span class="calib-sep">|</span>
+    <span class="calib-label">Shoulder:</span>
+    <input id="shoulder-width-input" type="number" step="1" min="25" max="60" value="40" title="Shoulder-to-shoulder width cm (avg adult ≈ 38-42 cm)" />
+    <span class="calib-unit">cm</span>
+    <span class="calib-sep">|</span>
     <span class="calib-label">Cam FOV:</span>
-    <input id="fov-input" type="number" step="1" min="30" max="120" value="62" title="Camera horizontal field-of-view in degrees (webcam ≈ 62°)" />
+    <input id="fov-input" type="number" step="1" min="30" max="120" value="62" title="Camera horizontal field-of-view in degrees (webcam ≈ 62°, phone front ≈ 75-90°, ultra-wide ≈ 100°+)" />
     <span class="calib-unit">°</span>
     <span class="calib-sep">|</span>
     <span class="calib-label">Depth:</span>
@@ -341,7 +346,7 @@
     </div>
 
     <div id="three-panel">
-      <span id="three-label">3D VIEW (cm)</span>
+      <span id="three-label">3D VIEW · drag=orbit  scroll=zoom  dblclick=reset</span>
       <!-- renderer canvas injected here by Three.js -->
     </div>
   </div>
