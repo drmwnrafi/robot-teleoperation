@@ -257,6 +257,47 @@ const latest = window.__handRobotData;
         └── v1
 ```
 
+## Pure Python MuJoCo 
+
+This demo connects the browser-based hand tracker directly to a MuJoCo simulation
+
+The pipeline consists of:
+
+```text
+MediaPipe → WebSocket → Landmark Processor → MuJoCo Controller
+```
+
+The landmark processor:
+- Converts MediaPipe coordinates to a robot-friendly frame
+- Tracks left/right hands consistently across frames
+- Applies EMA smoothing to hand and body landmarks
+- Extracts hand gestures and gripper state
+
+Start the landmark processor:
+
+```bash
+python landmark_processor.py --mode ws --host 0.0.0.0 --port 9090
+```
+
+### Parameters
+
+```bash
+python landmark_processor.py --mode ws \
+    --host 0.0.0.0 \
+    --port 9090 \
+    --record
+```
+
+| Parameter | Description |
+|------------|------------|
+| `--host` | WebSocket server host address |
+| `--port` | WebSocket server port |
+| `--record` | Save raw and processed landmark data to CSV |
+| `fix_x` | Use shoulder midpoint as X-axis origin |
+| `fix_y` | Use shoulder midpoint as Y-axis origin |
+| `fix_z` | Use shoulder midpoint as Z-axis origin |
+
+
 ## ROS Package 
 This package works together with the '[ROS 2 ObotX Mobile Manipulator](https://github.com/obotx/mobile-manipulator)'.
 
