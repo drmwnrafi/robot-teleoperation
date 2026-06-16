@@ -16,6 +16,9 @@ teleoperating a robot arm in real time.
 
 <video src="https://github.com/user-attachments/assets/dd417593-5118-4d7c-b3a1-64e6295da1a3" controls width="100%"></video>
 
+## Pure Python MuJoCo Demo
+<video src="https://github.com/user-attachments/assets/0d1b37a0-e36c-4e8d-8137-c4bc659694c4" controls width="100%"></video>
+
 ## Requirements
 
 - Node.js 18+
@@ -416,3 +419,5 @@ string[] landmark_names
 | `right_hand`       | Processed right hand data.          |
 | `body_landmarks`   | Array of body landmarks.            |
 | `landmark_names`   | List of available landmark names.   |
+
+
