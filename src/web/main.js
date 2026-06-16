@@ -106,8 +106,6 @@ const btnModeRos    = document.getElementById('btn-mode-ros');
 let isMirrored = true;
 
 // ─── WebSocket manager ────────────────────────────────────────────────────────
-// Sends robot data frames to a WebSocket server (e.g. Python bridge or ROS).
-// Auto-reconnects with exponential back-off up to MAX_RETRY attempts.
 class RobotSocket {
   static THROTTLE_MS = 33; 
   static MAX_RETRY   = 10;
@@ -119,27 +117,15 @@ class RobotSocket {
     this._attempts   = 0;
     this._retryTimer = null;
     this._lastSend   = 0;
-    
-    // ─── DUAL MODE SUPPORT ──────────────────────────────────────────────
-    // 'raw' -> Plain JSON (for Python websockets, Node.js, etc.)
-    // 'ros' -> rosbridge protocol (for ROS 2 rosbridge_server)
     this._mode       = 'raw'; 
-    
-    // ROS specific config (only used if mode is 'ros')
     this._rosTopic   = '/raw_landmarks';
     this._rosType    = 'std_msgs/String';
     this._advertised = false;
-    // ────────────────────────────────────────────────────────────────────
   }
 
-  /**
-   * Set the connection mode.
-   * @param {string} mode - 'raw' or 'ros'
-   */
   setMode(mode) {
     this._mode = mode;
     console.log(`[RobotSocket] Mode set to: ${mode}`);
-    
     if (mode === 'ros' && this._ws && this._ws.readyState === WebSocket.OPEN) {
       this._advertiseTopic();
     } else if (mode === 'raw') {
@@ -170,7 +156,6 @@ class RobotSocket {
 
   send(data) {
     if (!this._ws || this._ws.readyState !== WebSocket.OPEN) return;
-    // In ROS mode, wait until the topic is advertised before sending data
     if (this._mode === 'ros' && !this._advertised) return; 
     
     const now = performance.now();
@@ -179,14 +164,12 @@ class RobotSocket {
     
     let payload;
     if (this._mode === 'ros') {
-      // Wrap in rosbridge publish message
       payload = {
         op: 'publish',
         topic: this._rosTopic,
-        msg: { data: JSON.stringify(data) } // Sends JSON as a string inside std_msgs/String
+        msg: { data: JSON.stringify(data) }
       };
     } else {
-      // Send raw JSON for plain Python/Node servers
       payload = data;
     }
     
@@ -209,7 +192,6 @@ class RobotSocket {
     ws.onopen  = () => { 
       this._attempts = 0; 
       this._updateStatus('connected'); 
-      // If in ROS mode, immediately advertise the topic upon connection
       if (this._mode === 'ros') {
         this._advertiseTopic();
       }
@@ -270,34 +252,26 @@ class RobotSocket {
 const robotSocket = new RobotSocket();
 
 // ─── Gesture detection ────────────────────────────────────────────────────────
-// Returns one of: 'GRAB' | 'OPEN' | 'POINT' | 'PEACE' | null (unknown/transition)
-// All comparisons are wrist-relative → fully scale- and distance-invariant.
 function detectGesture(lm) {
   const wrist = lm[0];
   const dist2  = (a, b) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
 
-  // A finger is "curled" when its tip is closer to the wrist than its MCP joint.
-  // 10% hysteresis (0.9 factor) reduces flicker at the boundary.
   const curled = (mcpIdx, tipIdx) =>
-    dist2(wrist, lm[tipIdx]) < dist2(wrist, lm[mcpIdx]) * 0.81; // 0.9² = 0.81
+    dist2(wrist, lm[tipIdx]) < dist2(wrist, lm[mcpIdx]) * 0.81; 
 
-  const ci = curled(5,  8);   // index
-  const cm = curled(9,  12);  // middle
-  const cr = curled(13, 16);  // ring
-  const cp = curled(17, 20);  // pinky
+  const ci = curled(5,  8);   
+  const cm = curled(9,  12);  
+  const cr = curled(13, 16);  
+  const cp = curled(17, 20);  
 
-  // Specific gestures FIRST — before GRAB, otherwise "index out + 3 curled"
-  // would match GRAB (>=3) before we ever reach POINT.
-  if (!ci &&  cm &&  cr &&  cp) return 'POINT';  // only index extended
-  if (!ci && !cm &&  cr &&  cp) return 'PEACE';  // index + middle extended (V sign)
+  if (!ci &&  cm &&  cr &&  cp) return 'POINT';  
+  if (!ci && !cm &&  cr &&  cp) return 'PEACE';  
 
   const curledCount = [ci, cm, cr, cp].filter(Boolean).length;
-  // GRAB: original used >= 3 — tolerates one stiff/partially-curled finger.
   if (curledCount >= 3) return 'GRAB';
-  // OPEN: allow one slightly-bent finger (curledCount <= 1)
   if (curledCount <= 1) return 'OPEN';
 
-  return null; // transitional / unrecognised pose
+  return null; 
 }
 
 // ─── Three.js setup ──────────────────────────────────────────────────────────
@@ -306,63 +280,37 @@ renderer.setClearColor(0x0d1117);
 renderer.setPixelRatio(window.devicePixelRatio);
 threePanel.appendChild(renderer.domElement);
 
-// CSS2D label renderer (overlaid on top of the WebGL canvas for distance text)
 const labelRenderer = new CSS2DRenderer();
 labelRenderer.domElement.style.position = 'absolute';
 labelRenderer.domElement.style.top = '0';
 labelRenderer.domElement.style.left = '0';
-labelRenderer.domElement.style.pointerEvents = 'auto'; // needed for OrbitControls on front view
-threePanel.appendChild(labelRenderer.domElement);
-
-// CSS2D label renderer (overlaid on top of the WebGL canvas for distance text)
-const labelRenderer = new CSS2DRenderer();
-labelRenderer.domElement.style.position = 'absolute';
-labelRenderer.domElement.style.top = '0';
-labelRenderer.domElement.style.left = '0';
-labelRenderer.domElement.style.pointerEvents = 'auto'; // needed for OrbitControls on front view
+labelRenderer.domElement.style.pointerEvents = 'auto'; 
 threePanel.appendChild(labelRenderer.domElement);
 
 const scene  = new THREE.Scene();
-// Front view camera — interactive (OrbitControls). Starts near real-camera viewpoint.
-// Far plane = 200 scene units = 2000 cm = 20 m, well beyond any realistic body depth.
-// Near plane stays tiny so hands very close to the camera still render.
 const cam3d  = new THREE.PerspectiveCamera(60, 1, 0.01, 200);
 cam3d.position.set(0, 1.0, -2.0);
 
-// OrbitControls bound to the left (FRONT) half of the panel via labelRenderer.domElement
 const controls3d = new OrbitControls(cam3d, labelRenderer.domElement);
 controls3d.dampingFactor = 0.08;
 controls3d.minDistance   = 0.1;
 controls3d.maxDistance   = 100.0;  
 controls3d.target.set(0, 0, -4.5);
 controls3d.update();
-// Double-click to reset camera to default position
+
 labelRenderer.domElement.addEventListener('dblclick', () => {
   cam3d.position.set(0, 1.0, -2.0);
   controls3d.target.copy(_orbitTarget);
   controls3d.update();
 });
 
-// Scene-space center of detected hands — orbit target smoothly follows this
 const _orbitTarget = new THREE.Vector3(0, 0, -4.5);
 
 scene.add(new THREE.AmbientLight(0xffffff, 0.7));
 const dirLight = new THREE.DirectionalLight(0x00ff88, 2.5);
 dirLight.position.set(0.2, 0.3, -0.4);
-dirLight.position.set(0.2, 0.3, -0.4);
 scene.add(dirLight);
 
-// Axis helper placed at a typical hand depth (0.6 m = 60 cm)
-const axesHelper = new THREE.AxesHelper(0.05);
-axesHelper.position.set(0, 0, -0.6);
-scene.add(axesHelper);
-
-// ── Per-hand colour palettes ──
-const HAND_PALETTE = [
-  { normal: 0x00ff88, tip: 0xffff00, grab: 0xff4444, open: 0x00ff88, point: 0x58a6ff, peace: 0xf0b429, bone: 0x00aa55, boneActive: 0xaa2222 },
-  { normal: 0x58a6ff, tip: 0xffa500, grab: 0xff8800, open: 0x58a6ff, point: 0xff88ff, peace: 0xffbb44, bone: 0x2255aa, boneActive: 0xaa6600 },
-];
-// Axis helper placed at a typical hand depth (0.6 m = 60 cm)
 const axesHelper = new THREE.AxesHelper(0.05);
 axesHelper.position.set(0, 0, -0.6);
 scene.add(axesHelper);
@@ -373,19 +321,21 @@ const HAND_PALETTE = [
   { normal: 0x58a6ff, tip: 0xffa500, grab: 0xff8800, open: 0x58a6ff, point: 0xff88ff, peace: 0xffbb44, bone: 0x2255aa, boneActive: 0xaa6600 },
 ];
 
-// ── 21 joint spheres × 2 hands ──
-// ── 21 joint spheres × 2 hands ──
+// ── 21 joint spheres × 2 hands (Moved to global scope to prevent memory leaks) ──
 const GEO_JOINT = new THREE.SphereGeometry(0.03, 10, 10);
 const GEO_TIP   = new THREE.SphereGeometry(0.048, 10, 10);
-const jointMats = Array.from({ length: 21 }, () =>
-  new THREE.MeshStandardMaterial({ color: 0x00ff88 })
+
+const handJointMeshes = HAND_PALETTE.map((palette) =>
+  Array.from({ length: 21 }, (_, i) => {
+    const material = new THREE.MeshStandardMaterial({
+      color: TIPS.has(i) ? palette.tip : palette.normal,
+    });
+    const mesh = new THREE.Mesh(TIPS.has(i) ? GEO_TIP : GEO_JOINT, material);
+    mesh.visible = false;
+    scene.add(mesh);
+    return mesh;
+  })
 );
-const jointMeshes = Array.from({ length: 21 }, (_, i) => {
-  const m = new THREE.Mesh(TIPS.has(i) ? GEO_TIP : GEO_JOINT, jointMats[i]);
-  m.visible = false;
-  scene.add(m);
-  return m;
-});
 
 // ── Bone lines × 2 hands ──
 const handBoneLines = HAND_PALETTE.map(palette =>
@@ -402,7 +352,6 @@ const handBoneLines = HAND_PALETTE.map(palette =>
 );
 
 // ── Distance labels in 3D ──
-// Per hand: wrist→tip for all 5 fingers; inter-hand: wrist-to-wrist.
 const DIST_FINGER_PAIRS = [[0,4],[0,8],[0,12],[0,16],[0,20]];
 const DIST_FINGER_NAMES = ['Thumb','Index','Middle','Ring','Pinky'];
 
@@ -417,7 +366,6 @@ function makeDistLabel(color = '#ffffff') {
   return { obj, div };
 }
 
-// [hand0: 5 finger labels], [hand1: 5 finger labels], [inter-hand label]
 const handDistLabels = HAND_PALETTE.map((p, h) =>
   DIST_FINGER_NAMES.map(() => makeDistLabel(h === 0 ? '#00ff88' : '#58a6ff'))
 );
@@ -435,58 +383,20 @@ const bodyBoneLines = POSE_UPPER.map(() => {
   return { line };
 });
 
-// ── Distance labels in 3D ──
-// Per hand: wrist→tip for all 5 fingers; inter-hand: wrist-to-wrist.
-const DIST_FINGER_PAIRS = [[0,4],[0,8],[0,12],[0,16],[0,20]];
-const DIST_FINGER_NAMES = ['Thumb','Index','Middle','Ring','Pinky'];
-
-function makeDistLabel(color = '#ffffff') {
-  const div = document.createElement('div');
-  div.style.cssText = `font-size:10px;font-family:Consolas,monospace;color:${color};
-    background:rgba(13,17,23,0.75);padding:1px 5px;border-radius:3px;
-    white-space:nowrap;pointer-events:none;letter-spacing:0.5px;`;
-  const obj = new CSS2DObject(div);
-  obj.visible = false;
-  scene.add(obj);
-  return { obj, div };
-}
-
-// [hand0: 5 finger labels], [hand1: 5 finger labels], [inter-hand label]
-const handDistLabels = HAND_PALETTE.map((p, h) =>
-  DIST_FINGER_NAMES.map(() => makeDistLabel(h === 0 ? '#00ff88' : '#58a6ff'))
-);
-const interHandLabel = makeDistLabel('#f0b429');
-
-// ── Body skeleton (MediaPipe Pose upper body) ──
-const bodyBoneLines = POSE_UPPER.map(() => {
-  const geo = new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(), new THREE.Vector3(),
-  ]);
-  const mat = new THREE.LineBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.7 });
-  const line = new THREE.Line(geo, mat);
-  line.visible = false;
-  scene.add(line);
-  return { line };
-});
-
-// Returns the actual displayed content rect within the video CSS box,
-// accounting for object-fit: cover (the video is cropped, not letterboxed).
 function getVideoContentRect() {
   const W  = overlay.width  || 640;
   const H  = overlay.height || 480;
   const vw = video.videoWidth  || W;
   const vh = video.videoHeight || H;
-  // cover: scale so the smaller dimension fits, then crop the larger
   const scale = Math.max(W / vw, H / vh);
   const dw = vw * scale;
   const dh = vh * scale;
-  const ox = (W - dw) / 2;  // negative means content exceeds canvas
+  const ox = (W - dw) / 2;  
   const oy = (H - dh) / 2;
   return { ox, oy, dw, dh, W, H };
 }
 
 function resizeAll() {
-  // 2-D overlay matches the video element's rendered size
   const vRect = video.getBoundingClientRect();
   overlay.width  = vRect.width  || 640;
   overlay.height = vRect.height || 480;
@@ -499,7 +409,7 @@ function resizeAll() {
   }
 }
 window.addEventListener('resize', resizeAll);
-setTimeout(resizeAll, 200); // run after layout paints
+setTimeout(resizeAll, 200); 
 
 // ── Render loop ──
 (function animate() {
@@ -508,7 +418,6 @@ setTimeout(resizeAll, 200); // run after layout paints
   const tw = threePanel.clientWidth || 100;
   const th = threePanel.clientHeight || 100;
 
-  // Orbit center slowly drifts to where the hands are
   controls3d.target.lerp(_orbitTarget, 0.02);
 
   cam3d.aspect = tw / th;
@@ -522,25 +431,21 @@ setTimeout(resizeAll, 200); // run after layout paints
 
 // ─── Colors ──────────────────────────────────────────────────────────────────
 const GESTURE_COLOR  = { GRAB: '#ff4444', OPEN: '#00ff88', POINT: '#58a6ff', PEACE: '#f0b429' };
-const GESTURE_ID     = { GRAB: 1, OPEN: 2, POINT: 3, PEACE: 4 };  // numeric, in addition to string
+const GESTURE_ID     = { GRAB: 1, OPEN: 2, POINT: 3, PEACE: 4 };  
 
-// MediaPipe Pose body landmark names (for self-describing body output)
 const BODY_LANDMARK_NAMES = {
   0:'nose', 11:'shoulder_L', 12:'shoulder_R', 13:'elbow_L', 14:'elbow_R',
   15:'wrist_L', 16:'wrist_R', 23:'hip_L', 24:'hip_R',
 };
 
-// Latest pose image landmarks — written by onPoseResults, read by onHandResults for 2-D overlay
 let currentPoseLms    = null;
-let currentBodyMetrics = null;          // body joint cm positions for robot WS
-const smoothDepth     = [null, null];   // per-hand EMA depth smoothing
-let   lastHandDepthCm = null;           // most recent hand depth — used to anchor body skeleton
-let   lastBodyDepthCm = null;           // most recent body depth — used to clamp hand depth (occlusion)
-const lastWrist3d     = {};             // { 'Left': {x,y,z}, 'Right': {x,y,z} } — real 3D hand wrist positions
+let currentBodyMetrics = null;          
+const smoothDepth     = [null, null];   
+let   lastHandDepthCm = null;           
+let   lastBodyDepthCm = null;           
+const lastWrist3d     = {};             
 
-// WebSocket frame counter (monotonic, used by receiver to detect dropped packets)
 let _frameSeq = 0;
-// FPS measurement (sliding window of last 30 frames)
 const _frameTimes = [];
 
 // ─── Hand results callback ────────────────────────────────────────────────────
@@ -548,21 +453,13 @@ function determineHandLabel(handLm) {
   if (!currentPoseLms) return null;
 
   const wrist = handLm[0];
-
   const leftWrist = currentPoseLms[15];
   const rightWrist = currentPoseLms[16];
 
   if (!leftWrist || !rightWrist) return null;
 
-  const dLeft = Math.hypot(
-    wrist.x - leftWrist.x,
-    wrist.y - leftWrist.y
-  );
-
-  const dRight = Math.hypot(
-    wrist.x - rightWrist.x,
-    wrist.y - rightWrist.y
-  );
+  const dLeft = Math.hypot(wrist.x - leftWrist.x, wrist.y - leftWrist.y);
+  const dRight = Math.hypot(wrist.x - rightWrist.x, wrist.y - rightWrist.y);
 
   return dLeft < dRight ? "Left" : "Right";
 }
@@ -574,7 +471,6 @@ function onHandResults(results) {
 
   ctx.clearRect(0, 0, W, H);
 
-  // ── 2‑D body skeleton overlay ─────────────────────────────────────────────
   if (currentPoseLms) {
     const { ox, oy, dw, dh } = getVideoContentRect();
     const plmX = (nx) => isMirrored ? ox + (1 - nx) * dw : ox + nx * dw;
@@ -594,7 +490,6 @@ function onHandResults(results) {
   const numHands = results.multiHandLandmarks?.length ?? 0;
   const maxDisplayHands = Math.min(numHands, HAND_PALETTE.length);
 
-  // Hide hand visuals if no hands, but continue to body data publishing
   if (numHands === 0) {
     handJointMeshes.forEach(hm => hm.forEach(m => { m.visible = false; }));
     handBoneLines.forEach(hl => hl.forEach(({ line }) => { line.visible = false; }));
@@ -617,7 +512,6 @@ function onHandResults(results) {
   const allHandData = [];
   const gestureTexts = [];
 
-  // ── Process hands (only up to available resources) ────────────────────────
   for (let h = 0; h < maxDisplayHands; h++) {
     const lm = results.multiHandLandmarks[h];
     const wLm = results.multiHandWorldLandmarks?.[h];
@@ -627,7 +521,6 @@ function onHandResults(results) {
       ? (rawLabel === 'Left' ? 'Right' : rawLabel === 'Right' ? 'Left' : rawLabel)
       : rawLabel;
 
-    // Depth estimation
     const SEG_PAIRS = [
       [0, 9, 1.00], [0, 5, 0.95], [0, 17, 0.85], [5, 17, 0.78]
     ];
@@ -638,6 +531,7 @@ function onHandResults(results) {
       const d = (lenCm * f_norm) / (d2d + 1e-9);
       return (d >= DEPTH_MIN && d <= DEPTH_MAX) ? d : null;
     }).filter(d => d !== null).sort((x, y) => x - y);
+    
     let rawDepth;
     if (validDepths.length >= 2) {
       rawDepth = (validDepths[Math.floor(validDepths.length / 2) - 1] +
@@ -667,7 +561,6 @@ function onHandResults(results) {
     const isGrab = gesture === 'GRAB';
     if (gesture) gestureTexts.push({ label: handLabel, gesture });
 
-    // 2‑D overlay drawing
     const baseColor = h === 0 ? '#00ff88' : '#58a6ff';
     const boneColor = GESTURE_COLOR[gesture] ?? baseColor;
     ctx.lineWidth = 2;
@@ -689,7 +582,6 @@ function onHandResults(results) {
     ctx.fillStyle = baseColor;
     ctx.fillText(handLabel, lmX(lm[0].x) + 10, lmY(lm[0].y) - 8);
 
-    // 3‑D positions (cm)
     const pos_cm = lm.map((pt, i) => {
       const relZcm = (wLm && wLm[i]) ? wLm[i].z * 100 : (pt.z * depthCm);
       const jd = depthCm + relZcm;
@@ -706,7 +598,6 @@ function onHandResults(results) {
       pos3d: null, gesture, isGrab
     });
 
-    // Orientation metrics (optional)
     if (wLm && wLm.length === 21) {
       const toYup = v => ({ x: v.x, y: -v.y, z: -v.z });
       const fwd = vnorm(vsub(wLm[9], wLm[0]));
@@ -725,7 +616,6 @@ function onHandResults(results) {
     }
   }
 
-  // Update orbit target (use body center if no hands)
   if (allHandData.length > 0) {
     const n = allHandData.length;
     const avgX = allHandData.reduce((s, d) => s + d.wristXcm, 0) / n;
@@ -741,11 +631,10 @@ function onHandResults(results) {
     _orbitTarget.set(midX * CM_SCALE, midY * CM_SCALE, -midZ * CM_SCALE);
   }
 
-  // ── 3D updates for hands (only for those we actually processed) ───────────
   const allPos3d = [];
   for (let h = 0; h < maxDisplayHands; h++) {
     const handData = allHandData[h];
-    if (!handData) continue; // safety
+    if (!handData) continue; 
 
     const { pos_cm, wLm: hWLm, gesture, isGrab } = handData;
     const palette = HAND_PALETTE[h];
@@ -812,14 +701,12 @@ function onHandResults(results) {
     }
   }
 
-  // Hide any leftover visual resources (for indices beyond maxDisplayHands)
   for (let h = maxDisplayHands; h < HAND_PALETTE.length; h++) {
     handJointMeshes[h]?.forEach(m => { m.visible = false; });
     handBoneLines[h]?.forEach(({ line }) => { line.visible = false; });
     handDistLabels[h]?.forEach(l => { l.obj.visible = false; });
   }
 
-  // Inter‑hand distance label
   if (allHandData.length === 2 && allPos3d.length === 2) {
     const w0 = allHandData[0], w1 = allHandData[1];
     const distCm = Math.hypot(
@@ -839,7 +726,6 @@ function onHandResults(results) {
     interHandLabel.obj.visible = false;
   }
 
-  // Update gesture badge
   if (gestureTexts.length > 0) {
     const first = gestureTexts[0];
     gestureEl.textContent = gestureTexts.length > 1
@@ -852,7 +738,6 @@ function onHandResults(results) {
     gestureEl.textContent = '';
   }
 
-  // Coordinates panel
   const coordsHtml = allHandData.map(({ handLabel, pos_cm }, h) => {
     const headerColor = h === 0 ? '#00ff88' : '#58a6ff';
     const cols = pos_cm.map((p, i) => {
@@ -867,12 +752,7 @@ function onHandResults(results) {
     return `<div class="coord-hand-label" style="color:${headerColor};writing-mode:vertical-rl;padding:4px 6px;font-size:10px;flex-shrink:0;border-right:1px solid #30363d;letter-spacing:1px;">${handLabel}</div>${cols.join('')}`;
   }).join('');
   coordsEl.innerHTML = coordsHtml || '<span class="no-hand">No hand detected</span>';
-    });
-    return `<div class="coord-hand-label" style="color:${headerColor};writing-mode:vertical-rl;padding:4px 6px;font-size:10px;flex-shrink:0;border-right:1px solid #30363d;letter-spacing:1px;">${handLabel}</div>${cols.join('')}`;
-  }).join('');
-  coordsEl.innerHTML = coordsHtml || '<span class="no-hand">No hand detected</span>';
 
-  // ── ROBOT DATA (always built and sent) ─────────────────────────────────────
   const now = Date.now();
   _frameSeq++;
   _frameTimes.push(now);
@@ -935,14 +815,6 @@ function onHandResults(results) {
   window.dispatchEvent(new CustomEvent('hand-robot-data', { detail: robotData }));
   robotSocket.send(robotData);
   if (robotOut) {
-    const fmt = (p) => `(${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)})`;
-    const handLines = allHandData.map(d => {
-      const p3 = d.pos3d;
-      if (!p3) return '';
-      return [
-        ''
-      ].join('\n');
-    });
     robotOut.style.whiteSpace = 'pre';
     robotOut.style.fontSize   = '10px';
   }
@@ -958,20 +830,13 @@ function onPoseResults(results) {
 
   const f_norm = 0.5 / Math.tan(CAMERA_FOV_DEG * Math.PI / 360);
 
-  // Anchor depth: body uses ITS OWN depth estimate (from shoulder width), not the hand's.
-  // Using hand depth for the body would squish the whole skeleton to the hand's distance
-  // and wreck the arm geometry whenever a hand is extended forward.
   const sL = currentPoseLms[11], sR = currentPoseLms[12];
   const shoulderNorm = Math.abs(sR.x - sL.x);
   const shoulderDepthCm = (SHOULDER_WIDTH_CM * f_norm) / (shoulderNorm + 1e-9);
   const bodyDepthCm = shoulderDepthCm;
-  lastBodyDepthCm = bodyDepthCm;  // expose to onHandResults for occlusion clamp
+  lastBodyDepthCm = bodyDepthCm;  
   const mirX = isMirrored ? -1 : 1;
 
-  // Body 3D positions using the SAME projection as hands: image-landmark x,y projected
-  // through the camera ray at per-joint depth = bodyDepthCm + world relative z.
-  // Hand and body now live in one consistent cm frame, so the wrist override below
-  // is a tiny snap (just depth-estimator disagreement), not a coordinate-system jump.
   const wPose = results.poseWorldLandmarks;
   const bodyPos3d = currentPoseLms.map((lm2d, idx) => {
     const relZcm = (wPose && wPose[idx]) ? wPose[idx].z * 100 : 0;
@@ -983,18 +848,9 @@ function onPoseResults(results) {
     };
   });
 
-  // Override pose wrists with hand-tracker wrists (hand has its own, more accurate, depth).
-  // handLabel reflects the person's actual hand (MediaPipe gives reversed labels for
-  // unflipped input; the swap at top of onHandResults corrects that). So person-left → idx 15.
   if (lastWrist3d['Left'])  bodyPos3d[15] = lastWrist3d['Left'];
   if (lastWrist3d['Right']) bodyPos3d[16] = lastWrist3d['Right'];
 
-  // Reconstruct elbow on the shoulder→wrist line. MediaPipe Pose can't reliably localize
-  // the elbow in 3D when the arm points toward the camera (heavy foreshortening), and any
-  // off-line elbow position produces the "bent forearm pointing up" artifact you saw.
-  // Upper-arm:forearm ratio ≈ 28:26 → elbow at ~52% from shoulder to wrist.
-  // (If the user genuinely bends an arm sideways, this loses the bend; acceptable trade-off
-  // for the user's robotic-arm use case where arms are mostly extended.)
   const ELBOW_FRACTION = 0.52;
   const interpJoint = (s, w, f) => ({
     x: s.x + f * (w.x - s.x),
@@ -1003,15 +859,6 @@ function onPoseResults(results) {
   });
   if (lastWrist3d['Right']) bodyPos3d[14] = interpJoint(bodyPos3d[12], bodyPos3d[16], ELBOW_FRACTION);
   if (lastWrist3d['Left'])  bodyPos3d[13] = interpJoint(bodyPos3d[11], bodyPos3d[15], ELBOW_FRACTION);
-
-  // Debug: store body coords globally (read by onHandResults to avoid flicker)
-  const f3 = (p) => `(${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)})`;
-  const fw = (w) => w ? `(${w.x.toFixed(3)},${w.y.toFixed(3)},${w.z.toFixed(3)})` : 'n/a';
-  const bnames = { 11:'shldr_L', 12:'shldr_R', 13:'elbow_L', 14:'elbow_R', 15:'wrist_L', 16:'wrist_R' };
-  window.__bodyDbg = `=== BODY  depth=${bodyDepthCm.toFixed(1)}cm mirX=${isMirrored} ===\n`
-    + Object.entries(bnames).map(([i,n]) =>
-        `  ${n.padEnd(8)} ${f3(bodyPos3d[+i])}  raw:${fw(wPose?.[+i])}`
-    ).join('\n');
 
   POSE_UPPER.forEach(([a, b], i) => {
     const { line } = bodyBoneLines[i];
@@ -1023,8 +870,6 @@ function onPoseResults(results) {
     line.visible = true;
   });
 
-  // Robot telemetry uses the CORRECTED bodyPos3d (wrist overrides + straightened elbow),
-  // not the raw pose landmarks — that way the robot gets the same geometry the user sees.
   const scene2cm = (p) => p ? [
     +(p.x / CM_SCALE).toFixed(1),
     +(p.y / CM_SCALE).toFixed(1),
@@ -1069,7 +914,7 @@ pose.onResults(onPoseResults);
 let webcamStream  = null;
 let mpCamInstance = null;
 let videoFileLoop = false;
-let _poseFrame    = 0; // run pose every 3rd frame for performance
+let _poseFrame    = 0; 
 
 function fmt(s) {
   const m = Math.floor(s / 60);
@@ -1125,41 +970,41 @@ function stopWebcam() {
 async function startVideoFile(file) {
   console.log('[startVideoFile] called with:', file.name);
   try {
-  stopWebcam();
-  stopVideoFile();
+    stopWebcam();
+    stopVideoFile();
 
-  isMirrored = false;
-  video.classList.add('no-mirror');
-  videoControls.classList.add('visible');
-  btnVideo.classList.add('active');
-  btnCamera.classList.remove('active');
+    isMirrored = false;
+    video.classList.add('no-mirror');
+    videoControls.classList.add('visible');
+    btnVideo.classList.add('active');
+    btnCamera.classList.remove('active');
 
-  const url = URL.createObjectURL(file);
-  video.src = url;
-  video.loop = true;
-  video.muted = true;
-  video.playbackRate = parseFloat(speedSelect.value);
+    const url = URL.createObjectURL(file);
+    video.src = url;
+    video.loop = true;
+    video.muted = true;
+    video.playbackRate = parseFloat(speedSelect.value);
 
-  await new Promise((resolve, reject) => {
-    video.addEventListener('loadedmetadata', resolve, { once: true });
-    video.addEventListener('error', () => reject(new Error(`Cannot load video: ${video.error?.message || 'unsupported format'}`)), { once: true });
-  });
-  resizeAll();
-  seekEl.max = video.duration;
-  timeDisplay.textContent = `0:00 / ${fmt(video.duration)}`;
-  video.play();
-  btnPlayPause.textContent = '⏸';
-  statusEl.textContent = `Video: ${file.name}`;
+    await new Promise((resolve, reject) => {
+      video.addEventListener('loadedmetadata', resolve, { once: true });
+      video.addEventListener('error', () => reject(new Error(`Cannot load video: ${video.error?.message || 'unsupported format'}`)), { once: true });
+    });
+    resizeAll();
+    seekEl.max = video.duration;
+    timeDisplay.textContent = `0:00 / ${fmt(video.duration)}`;
+    video.play();
+    btnPlayPause.textContent = '⏸';
+    statusEl.textContent = `Video: ${file.name}`;
 
-  videoFileLoop = true;
-  (async function loop() {
-    if (!videoFileLoop) return;
-    if (!video.paused && !video.ended && video.readyState >= 2) {
-      await hands.send({ image: video });
-      if (++_poseFrame % 3 === 0) await pose.send({ image: video });
-    }
-    requestAnimationFrame(loop);
-  })();
+    videoFileLoop = true;
+    (async function loop() {
+      if (!videoFileLoop) return;
+      if (!video.paused && !video.ended && video.readyState >= 2) {
+        await hands.send({ image: video });
+        if (++_poseFrame % 3 === 0) await pose.send({ image: video });
+      }
+      requestAnimationFrame(loop);
+    })();
   } catch (err) {
     console.error('[startVideoFile] ERROR:', err);
     statusEl.textContent = `Video error: ${err.message}`;
@@ -1198,8 +1043,6 @@ btnCamera.addEventListener('click', () => {
   startWebcam();
 });
 
-// btnVideo is now a <label for="file-input"> — browser opens file picker natively.
-
 fileInput.addEventListener('change', () => {
   console.log('[change] files:', fileInput.files.length, fileInput.files[0]?.name);
   if (fileInput.files[0]) startVideoFile(fileInput.files[0]);
@@ -1236,7 +1079,6 @@ if (btnWs) {
     if (robotSocket._enabled) {
       robotSocket.disconnect();
     } else {
-      // If URL is empty, default to port 9090 for ROS, or 8765 for plain
       const defaultPort = robotSocket._mode === 'ros' ? 'ws://localhost:9090' : 'ws://localhost:8765';
       const url = wsUrlInput?.value.trim() || defaultPort;
       lsSet('ht_wsUrl', url);
@@ -1244,19 +1086,18 @@ if (btnWs) {
     }
   });
 }
-// --- 2. The "ROS" button acts purely as a format toggle ---
+
 if (btnModeRos) {
   btnModeRos.addEventListener('click', () => {
     const isCurrentlyRos = robotSocket._mode === 'ros';
     const newMode = isCurrentlyRos ? 'raw' : 'ros';
     
-    // Update the socket mode
     robotSocket.setMode(newMode);
     
-    // Update the button UI to show it's active
     btnModeRos.classList.toggle('active', !isCurrentlyRos);
     btnModeRos.textContent = !isCurrentlyRos ? 'ROS ✓' : 'ROS';
   });
 }
+
 // ─── Start with webcam by default ────────────────────────────────────────────
 startWebcam();
