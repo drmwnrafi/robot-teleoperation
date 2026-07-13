@@ -29,12 +29,20 @@ teleoperating a robot arm in real time.
 
 ## Running
 
+### Web Based
 ```bash
 npm install
 npm run dev        # → http://localhost:5173
 ```
 
 For a production build: `npm run build` (output in `dist/`).
+
+### Python
+```bash
+uv sync
+uv run src/camera_calibration/caputre_calibrate.py # run calibration camera
+uv run python src/examples/tracking_publisher.py --calibration src/camera_calibration/calibration_results/cam_calib_\(10x7\)_22.0mm_1920x1080.npz --use-bpf --width 1920 --height 1080 #stream and publish the landmarks 
+```
 
 ## Calibration
 
