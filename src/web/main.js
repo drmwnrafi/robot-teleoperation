@@ -101,6 +101,7 @@ const wsUrlInput    = document.getElementById('ws-url-input');
 const btnWs         = document.getElementById('btn-ws');
 const wsStatusDot   = document.getElementById('ws-status');
 const btnModeRos    = document.getElementById('btn-mode-ros');
+const cameraSelect  = document.getElementById('camera-select');
 
 // Mirror flag: true for webcam (feels natural), false for video files
 let isMirrored = true;
@@ -912,47 +913,181 @@ pose.onResults(onPoseResults);
 
 // ─── Source management ────────────────────────────────────────────────────────
 let webcamStream  = null;
-let mpCamInstance = null;
 let videoFileLoop = false;
 let _poseFrame    = 0; 
+let isSwitchingCamera = false;
+let camerasPopulated = false;  // Track if we've already populated cameras
 
 function fmt(s) {
   const m = Math.floor(s / 60);
   return `${m}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 }
 
+// ── Camera enumeration - only run once ──
+async function populateCameras() {
+  if (!cameraSelect || camerasPopulated) return;
+  
+  try {
+    // Request temporary access to get accurate device labels
+    const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
+    tempStream.getTracks().forEach(track => track.stop());
+    
+    // Get the list of all media devices
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videoDevices = devices.filter(device => device.kind === 'videoinput');
+    
+    // Clear and repopulate
+    cameraSelect.innerHTML = ''; 
+    
+    // Populate the dropdown
+    videoDevices.forEach((device, index) => {
+      const option = document.createElement('option');
+      option.value = device.deviceId;
+      option.text = device.label || `Camera ${index + 1}`;
+      cameraSelect.appendChild(option);
+    });
+
+    // Default to first camera
+    if (videoDevices.length > 0) {
+      cameraSelect.value = videoDevices[0].deviceId;
+    }
+
+    camerasPopulated = true;
+    console.log('[populateCameras] Available cameras:', videoDevices.map(d => d.label));
+  } catch (err) {
+    console.error("[populateCameras] Error:", err);
+  }
+}
+
 // ── Webcam mode ──
 async function startWebcam() {
-  stopVideoFile();
-  isMirrored = true;
-  video.classList.remove('no-mirror');
-  videoControls.classList.remove('visible');
-  btnCamera.classList.add('active');
-  btnVideo.classList.remove('active');
-
-  statusEl.textContent = 'Requesting camera…';
+  if (isSwitchingCamera) {
+    console.log('[startWebcam] Already switching, ignoring');
+    return;
+  }
+  
+  isSwitchingCamera = true;
+  console.log('[startWebcam] Starting with device:', cameraSelect?.value || 'default');
+  
   try {
+    // Stop any existing webcam stream FIRST
+    if (webcamStream) { 
+      webcamStream.getTracks().forEach(t => t.stop()); 
+      webcamStream = null; 
+    }
+    
+    stopVideoFile();
+    
+    isMirrored = true;
+    video.classList.remove('no-mirror');
+    videoControls.classList.remove('visible');
+    btnCamera.classList.add('active');
+    btnVideo.classList.remove('active');
+
+    statusEl.textContent = 'Requesting camera…';
+    
+    const selectedDeviceId = cameraSelect ? cameraSelect.value : null;
+    console.log('[startWebcam] Selected device ID:', selectedDeviceId);
+
+    // Build video constraints
+    const videoConstraints = { 
+      width: { ideal: 1280 }, 
+      height: { ideal: 720 } 
+    };
+    
+    if (selectedDeviceId) {
+      videoConstraints.deviceId = { exact: selectedDeviceId };
+    } else {
+      videoConstraints.facingMode = 'user'; 
+    }
+
+    // Request the specific camera stream
     webcamStream = await navigator.mediaDevices.getUserMedia({
-      video: { width: 1920, height: 1080, facingMode: 'user' },
+      video: videoConstraints,
     });
+    
+    const videoTrack = webcamStream.getVideoTracks()[0];
+    const settings = videoTrack.getSettings();
+    console.log('[startWebcam] Stream obtained:', {
+      label: videoTrack.label,
+      deviceId: settings.deviceId,
+      width: settings.width,
+      height: settings.height
+    });
+    
+    // Set the stream to video element
     video.srcObject = webcamStream;
     video.src = '';
-    await new Promise(r => video.addEventListener('loadeddata', r, { once: true }));
-    resizeAll();
-    statusEl.textContent = 'Loading MediaPipe…';
-    mpCamInstance = new window.Camera(video, {
-      async onFrame() {
-        await hands.send({ image: video });
-        if (++_poseFrame % 3 === 0) await pose.send({ image: video });
-      },
-      width: 1920,
-      height: 1080,
+    
+    // Wait for video to be ready
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Video load timeout')), 5000);
+      
+      video.onloadeddata = () => {
+        clearTimeout(timeout);
+        console.log('[startWebcam] Video loaded, dimensions:', video.videoWidth, 'x', video.videoHeight);
+        resolve();
+      };
+      
+      video.onerror = () => {
+        clearTimeout(timeout);
+        reject(new Error('Video element error'));
+      };
     });
-    mpCamInstance.start();
+    
+    // Ensure video is playing
+    if (video.paused) {
+      await video.play();
+    }
+    
+    resizeAll();
+
+    statusEl.textContent = 'Loading MediaPipe…';
+
+    let _webcamLoopId = null;
+    let _webcamBusy = false;
+
+    const webcamFrameLoop = async () => {
+      if (!webcamStream) { _webcamLoopId = null; return; }
+      if (video.paused || video.ended) {
+        _webcamLoopId = requestAnimationFrame(webcamFrameLoop);
+        return;
+      }
+      // Skip frame if previous one is still being processed
+      if (_webcamBusy) {
+        _webcamLoopId = requestAnimationFrame(webcamFrameLoop);
+        return;
+      }
+      _webcamBusy = true;
+      try {
+        await hands.send({ image: video });
+        if (++_poseFrame % 3 === 0) {
+          await pose.send({ image: video });
+        }
+      } catch (err) {
+        console.error('[webcamFrameLoop] Error:', err);
+      }
+      _webcamBusy = false;
+      _webcamLoopId = requestAnimationFrame(webcamFrameLoop);
+    };
+
+    // Store the cancel function so stopWebcam() can reach it
+    window.__stopWebcamLoop = () => {
+      if (_webcamLoopId) { cancelAnimationFrame(_webcamLoopId); _webcamLoopId = null; }
+      _webcamBusy = false;
+    };
+
+    _webcamLoopId = requestAnimationFrame(webcamFrameLoop);
     statusEl.textContent = 'Waiting for hand…';
+    
   } catch (err) {
+    console.error('[startWebcam] Error:', err);
     statusEl.textContent = `Camera error: ${err.message}`;
     coordsEl.innerHTML = `<span class="no-hand">⚠ ${err.message}</span>`;
+  } finally {
+    setTimeout(() => {
+      isSwitchingCamera = false;
+    }, 500);
   }
 }
 
@@ -962,11 +1097,15 @@ function stopVideoFile() {
 }
 
 function stopWebcam() {
-  if (mpCamInstance) { try { mpCamInstance.stop(); } catch (_) {} mpCamInstance = null; }
-  if (webcamStream)  { webcamStream.getTracks().forEach(t => t.stop()); webcamStream = null; }
+  // ✅ Cancel our manual loop
+  if (window.__stopWebcamLoop) { window.__stopWebcamLoop(); window.__stopWebcamLoop = null; }
+
+  if (webcamStream) {
+    webcamStream.getTracks().forEach(t => t.stop());
+    webcamStream = null;
+  }
   video.srcObject = null;
 }
-
 async function startVideoFile(file) {
   console.log('[startVideoFile] called with:', file.name);
   try {
@@ -1049,6 +1188,23 @@ fileInput.addEventListener('change', () => {
   fileInput.value = '';
 });
 
+// ─── Camera selection change ──────────────────────────────────────────────────
+if (cameraSelect) {
+  cameraSelect.addEventListener('change', async () => {
+    console.log('[cameraSelect] Changed to:', cameraSelect.value);
+    
+    if (isSwitchingCamera) {
+      console.log('[cameraSelect] Already switching, ignoring');
+      return;
+    }
+    
+    // Only restart if we're in camera mode
+    if (btnCamera.classList.contains('active')) {
+      await startWebcam();
+    }
+  });
+}
+
 // ─── Calibration controls ─────────────────────────────────────────────────────
 if (handSizeInput) {
   handSizeInput.value = HAND_SIZE_CM;
@@ -1099,5 +1255,35 @@ if (btnModeRos) {
   });
 }
 
-// ─── Start with webcam by default ────────────────────────────────────────────
-startWebcam();
+// ─── Device change listener ───────────────────────────────────────────────────
+navigator.mediaDevices.addEventListener('devicechange', async () => {
+  // Only re-populate if we haven't done it yet
+  if (!camerasPopulated) {
+    console.log('[devicechange] Populating cameras for first time');
+    await populateCameras();
+  } else {
+    console.log('[devicechange] Cameras already populated, ignoring');
+  }
+});
+
+// ─── Initialize application ───────────────────────────────────────────────────
+async function initApp() {
+  console.log('[initApp] Starting initialization...');
+  
+  // Wait for cameras to be enumerated first
+  await populateCameras();
+  
+  // Small delay to ensure DOM is ready
+  await new Promise(resolve => setTimeout(resolve, 200));
+  
+  // Now start the webcam
+  await startWebcam();
+  
+  console.log('[initApp] Initialization complete');
+}
+
+// Initialize the app
+initApp().catch(err => {
+  console.error('[initApp] Initialization error:', err);
+  statusEl.textContent = `Init error: ${err.message}`;
+});
