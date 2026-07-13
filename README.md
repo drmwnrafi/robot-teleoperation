@@ -41,7 +41,7 @@ For a production build: `npm run build` (output in `dist/`).
 
 ```bash
 # Clone with submodules
-git clone --recurse-submodules https://github.com/drmwnrafi/robot-teleoperation.git
+git clone --recurse-submodules https://github.com/obotx/robot-teleoperation.git
 
 cd robot-teleoperation
 
