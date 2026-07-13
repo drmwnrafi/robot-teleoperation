@@ -37,11 +37,22 @@ npm run dev        # → http://localhost:5173
 
 For a production build: `npm run build` (output in `dist/`).
 
-### Python
+### Python Landmarks
+
 ```bash
+# Clone with submodules
+git clone --recurse-submodules https://github.com/drmwnrafi/robot-teleoperation.git
+
+cd robot-teleoperation
+
+# Install dependencies
 uv sync
-uv run src/camera_calibration/caputre_calibrate.py # run calibration camera
-uv run python src/examples/tracking_publisher.py --calibration src/camera_calibration/calibration_results/cam_calib_\(10x7\)_22.0mm_1920x1080.npz --use-bpf --width 1920 --height 1080 #stream and publish the landmarks 
+
+# Run camera calibration
+uv run src/camera_calibration/capture_calibrate.py
+
+# Stream webcam and publish landmarks
+uv run src/examples/tracking_publisher.py --calibration src/camera_calibration/calibration_results/cam_calib_\(10x7\)_22.0mm_1920x1080.npz --use-bpf --width 1920 --height 1080
 ```
 
 ## Calibration

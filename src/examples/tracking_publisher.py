@@ -5,7 +5,7 @@ import os
 import argparse
 import babyros
 import platform
-import base64  # <-- ADDED: Required for Base64 encoding of image bytes
+import base64 
 
 try:
     import pyvista as pv
@@ -203,10 +203,8 @@ def parse_args():
     parser.add_argument("--width", type=int, default=1920)
     parser.add_argument("--height", type=int, default=1080)
     
-    # --- NEW: Display Window Size Arguments ---
     parser.add_argument("--window-width", type=int, default=960, help="Display window width (default: 960)")
     parser.add_argument("--window-height", type=int, default=540, help="Display window height (default: 540)")
-    # ------------------------------------------
 
     parser.add_argument("--smoothing", type=float, default=0.10)
     parser.add_argument("--detect_conf_hand", type=float, default=0.3)
@@ -219,7 +217,6 @@ def parse_args():
                         help="Enable Body Pre-Focusing for improved far-range detection")
     parser.add_argument("--show-3d", action="store_true", help="Enable PyVista 3D visualization")
     
-    # --- Camera Hardware Controls ---
     parser.add_argument("--brightness", type=float, default=-1.0, help="Camera brightness (0-255, -1 to ignore)")
     parser.add_argument("--contrast", type=float, default=-1.0, help="Camera contrast (0-255, -1 to ignore)")
     parser.add_argument("--sharpness", type=float, default=-1.0, help="Camera sharpness (0-255, -1 to ignore)")
@@ -242,12 +239,11 @@ class SyntheticResults:
 def main():
     args = parse_args()
     
-    # Publishers
     pub_tracking = babyros.node.Publisher(topic="landmarks")
     pub_gesture = babyros.node.Publisher(topic="hand_gestures")
     pub_image = babyros.node.Publisher(topic="image_compressed")
     
-    print("✓ BabyROS Publishers initialized:")
+    print("BabyROS Publishers initialized:")
     print("  - 'landmarks'")
     print("  - 'hand_gestures'")
     print("  - 'image_compressed'")
@@ -315,7 +311,6 @@ def main():
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
 
-    # --- Apply Camera Hardware Properties ---
     if args.camera_settings:
         print("Opening native camera settings dialog...")
         cap.set(cv2.CAP_PROP_SETTINGS, 1)
@@ -334,7 +329,7 @@ def main():
 
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    print(f"✓ Camera opened at {frame_width}x{frame_height}")
+    print(f"Camera opened at {frame_width}x{frame_height}")
 
     camera_matrix, distortion = load_calibration(args.calibration, frame_width, frame_height)
 
@@ -343,18 +338,15 @@ def main():
     pose_filter = EMAFilter(alpha=args.smoothing)
     pose_rigid_filter = RigidTransformFilter(alpha=args.smoothing)
 
-    # --- Software Enhancement Initialization ---
     if args.enhance:
-        print("✓ Software Image Enhancement ENABLED (CLAHE + Unsharp Masking)")
+        print("Software Image Enhancement ENABLED (CLAHE + Unsharp Masking)")
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
     else:
         clahe = None
 
-    # --- NEW: Initialize Display Window with Custom Size ---
     window_name = '2D External Camera (Press q to quit, b to toggle BPF)'
     cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(window_name, args.window_width, args.window_height)
-    # -----------------------------------------------------
 
     with mp_hands.Hands(
             model_complexity=1,
@@ -381,7 +373,6 @@ def main():
 
             image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             
-            # --- Software Image Enhancement ---
             if clahe is not None:
                 lab = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2LAB)
                 l, a, b = cv2.split(lab)
@@ -391,7 +382,6 @@ def main():
                 
                 blurred = cv2.GaussianBlur(image_rgb, (0, 0), 2.0)
                 image_rgb = cv2.addWeighted(image_rgb, 1.5, blurred, -0.5, 0)
-            # -----------------------------------
             
             frame_h, frame_w = image.shape[:2]
 
@@ -413,7 +403,6 @@ def main():
                     right_wrist_px, right_elbow_px = right_wrist_elbow
                     right_crop = bpf.create_hand_crop(right_wrist_px, right_elbow_px, frame_w, frame_h)
 
-            # --- FIXED BPF LOGIC ---
             results_hands = None
             hands_detected_in_crop = False
             
@@ -467,16 +456,13 @@ def main():
                     results_hands = hands.process(image_rgb)
             else:
                 results_hands = hands.process(image_rgb)
-            # -----------------------
 
-            # Draw pose landmarks
             image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
             if results_pose.pose_landmarks:
                 mp_drawing.draw_landmarks(
                     image_bgr, results_pose.pose_landmarks, mp_pose.POSE_CONNECTIONS,
                     mp_drawing_styles.get_default_pose_landmarks_style())
             
-            # Draw hand landmarks
             if results_hands and getattr(results_hands, 'multi_hand_landmarks', None):
                 for hand_landmarks in results_hands.multi_hand_landmarks:
                     mp_drawing.draw_landmarks(
@@ -496,7 +482,6 @@ def main():
                         cv2.putText(image_bgr, "Right Hand ROI", (x_min, y_min-10), 
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
-            # Process 3D WORLD coordinates for Pose
             pose_world_points = None
             if results_pose.pose_world_landmarks and results_pose.pose_landmarks:
                 model_points = np.array([[lm.x, lm.y, lm.z] for lm in results_pose.pose_world_landmarks.landmark])
@@ -525,7 +510,6 @@ def main():
                         pose_cloud.points = pose_world_points
                         pose_lines.points = pose_world_points
 
-            # Process Hands and recognize gestures
             left_hand_final_points = None
             right_hand_final_points = None
             left_gesture = "unknown"
@@ -593,7 +577,6 @@ def main():
                                 right_hand_lines.points = hand_world_points
                             right_hand_final_points = hand_world_points.copy()
 
-            # --- PUBLISH TRACKING DATA ---
             poses_list = []
             if pose_world_points is not None and len(pose_world_points) == 33:
                 for idx in range(33):
@@ -624,7 +607,6 @@ def main():
                 }
                 pub_tracking.publish(msg)
 
-            # --- PUBLISH GESTURE DATA ---
             gesture_msg = {
                 "header": {"stamp": {"sec": 0, "nanosec": 0}, "frame_id": "world"},
                 "left_hand": left_gesture,
@@ -632,7 +614,6 @@ def main():
             }
             pub_gesture.publish(gesture_msg)
 
-            # --- PUBLISH COMPRESSED IMAGE (FIXED) ---
             # Compress the BGR image to JPEG. Quality 80 is a great balance.
             encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 80]
             success_encode, encoded_image = cv2.imencode('.jpg', image_bgr, encode_param)
@@ -644,16 +625,13 @@ def main():
                 img_msg = {
                     "header": {"stamp": {"sec": 0, "nanosec": 0}, "frame_id": "camera"},
                     "format": "jpeg",
-                    "data": img_b64  # <-- Now a JSON-serializable string
+                    "data": img_b64 
                 }
                 pub_image.publish(img_msg)
-            # ----------------------------------------
 
-            # Update 3D view if enabled
             if args.show_3d and plotter is not None:
                 plotter.update()
 
-            # Show 2D webcam feed with gesture info
             image_bgr_mirror = cv2.flip(image_bgr, 1)
             
             if use_bpf:
@@ -675,7 +653,6 @@ def main():
             cv2.putText(image_bgr_mirror, f"Right: {right_gesture}", (10, 100), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
             
-            # --- UPDATED: Use the predefined window_name ---
             cv2.imshow(window_name, image_bgr_mirror)
             
             key = cv2.waitKey(5) & 0xFF

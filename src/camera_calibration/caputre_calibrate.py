@@ -11,7 +11,7 @@ FRAME_HEIGHT = 1080
 N_IMAGES = 25                     
 IMAGE_DIR = "calibration_results"
 
-MIRROR_DISPLAY = True             # True for front-facing webcams
+MIRROR_DISPLAY = True           
 SHARPNESS_THRESHOLD = 40          
 AUTO_CAPTURE_COOLDOWN = 1.5      
 
