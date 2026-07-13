@@ -614,11 +614,9 @@ def main():
             }
             pub_gesture.publish(gesture_msg)
 
-            # Compress the BGR image to JPEG. Quality 80 is a great balance.
             encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 80]
             success_encode, encoded_image = cv2.imencode('.jpg', image_bgr, encode_param)
             if success_encode:
-                # Convert numpy array to raw bytes, then encode to Base64 string for JSON serialization
                 img_bytes = encoded_image.tobytes()
                 img_b64 = base64.b64encode(img_bytes).decode('utf-8')
                 
