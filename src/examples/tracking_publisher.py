@@ -349,7 +349,7 @@ def main():
     cv2.resizeWindow(window_name, args.window_width, args.window_height)
 
     with mp_hands.Hands(
-            model_complexity=1,
+            model_complexity=0,
             max_num_hands=2,
             min_detection_confidence=args.detect_conf_hand,
             min_tracking_confidence=args.track_conf_hand) as hands, \
