@@ -19,7 +19,7 @@ teleoperating a robot arm in real time.
 ## Pure Python MuJoCo Demo
 <video src="https://github.com/user-attachments/assets/0d1b37a0-e36c-4e8d-8137-c4bc659694c4" controls width="100%"></video>
 
-<video src="https://github.com/user-attachments/assets/851bb311-2498-4350-bd4a-44178864ec4a" controls width="100%"></video>
+<video src="https://github.com/user-attachments/assets/2de7e4b3-d723-46cf-aba5-8f21a8e20cff" controls width="100%"></video>
 
 ## Requirements
 
