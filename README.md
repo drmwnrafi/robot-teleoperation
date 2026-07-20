@@ -19,6 +19,10 @@ teleoperating a robot arm in real time.
 ## Pure Python MuJoCo Demo
 <video src="https://github.com/user-attachments/assets/0d1b37a0-e36c-4e8d-8137-c4bc659694c4" controls width="100%"></video>
 
+<!-- <video src="https://github.com/user-attachments/assets/2de7e4b3-d723-46cf-aba5-8f21a8e20cff" controls width="100%"></video> -->
+
+<video src="https://github.com/user-attachments/assets/b6f64c26-bcda-4827-a561-64c2dc341950" controls width="100%"></video>
+
 ## Requirements
 
 - Node.js 18+
@@ -27,12 +31,31 @@ teleoperating a robot arm in real time.
 
 ## Running
 
+### Web Based
 ```bash
 npm install
 npm run dev        # → http://localhost:5173
 ```
 
 For a production build: `npm run build` (output in `dist/`).
+
+### Python Landmarks
+
+```bash
+# Clone with submodules
+git clone --recurse-submodules https://github.com/obotx/robot-teleoperation.git
+
+cd robot-teleoperation
+
+# Install dependencies
+uv sync
+
+# Run camera calibration
+uv run src/camera_calibration/capture_calibrate.py
+
+# Stream webcam and publish landmarks
+uv run src/examples/tracking_publisher.py --calibration src/camera_calibration/calibration_results/cam_calib_\(10x7\)_22.0mm_1920x1080.npz --use-bpf --width 1920 --height 1080
+```
 
 ## Calibration
 

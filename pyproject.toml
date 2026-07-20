@@ -1,0 +1,24 @@
+[project]
+name = "robot-teleoperation"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "babyros",
+    "mediapipe==0.10.21",
+    "numpy<2",
+    "onnxruntime-gpu==1.20.0",
+    "opencv-python<4.13",  # Downgrade this
+    "pose-estimation-recognition-utils-rtmlib>=0.3.1",
+    "pyvista>=0.48.4",
+    "setuptools==79.0.1",
+]
+
+[tool.uv.workspace]
+members = [
+    "lib/babyros",
+]
+
+[tool.uv.sources]
+babyros = { workspace = true, editable = true }
