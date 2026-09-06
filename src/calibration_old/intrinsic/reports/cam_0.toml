@@ -1,0 +1,8 @@
+rmse = 1.34427132432666
+frames_used = 30
+coverage_fraction = 0.48
+edge_coverage_fraction = 0.375
+corner_coverage_fraction = 0.25
+orientation_sufficient = true
+orientation_count = 7
+selected_frames = [1744, 1938, 1001, 765, 795, 1012, 1716, 1699, 1071, 886, 2085, 1764, 1954, 2110, 1742, 2169, 889, 606, 1523, 879, 493, 613, 2149, 2097, 1955, 135, 262, 1728, 1007, 488]

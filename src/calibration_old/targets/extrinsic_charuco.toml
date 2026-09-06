@@ -1,0 +1,11 @@
+columns = 5
+rows = 7
+board_height = 29.7
+board_width = 21.0
+dictionary = "DICT_4X4_50"
+units = "cm"
+aruco_scale = 0.75
+square_size_override_cm = 5.0
+inverted = true
+legacy_pattern = false
+thickness_cm = 0.0
