@@ -1,0 +1,13 @@
+bool present
+float32 confidence
+float32 depth_m
+geometry_msgs/Point wrist_m
+geometry_msgs/Point[] joints_m
+float32[] palm_normal
+float32[] finger_dir
+float32[] finger_curl
+float32[] pinch_m
+float32 grip_aperture_m
+string gesture
+int32 gesture_id
+bool is_grab

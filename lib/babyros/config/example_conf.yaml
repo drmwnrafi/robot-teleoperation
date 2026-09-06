@@ -1,0 +1,7 @@
+# Simple format: babyros_topic:ros_msg_type:ros_topic
+topics:
+  - imu:sensor_msgs/msg/Imu:/imu
+  - cmd_vel:geometry_msgs/msg/Twist:/cmd_vel
+  - camera_img:sensor_msgs/msg/Image:/camera/image_raw
+
+default_direction: babyros2ros
