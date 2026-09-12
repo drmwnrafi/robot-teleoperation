@@ -1,33 +1,51 @@
+# Robot Teleoperation
+
+## Table of Contents
+
+- [Multiple Cameras](#multiple-cameras)
+  - [Calibration](#calibration)
+  - [3D Pose Estimation](#3d-pose-estimation)
+- [Web Based](#web-based)
+  - [Requirements](#requirements)
+  - [Parametes](#parametes)
+  - [WebSocket](#websocket)
+    - [Message format](#message-format)
+    - [Things worth knowing](#things-worth-knowing)
+    - [If the robot is in a different coordinate frame](#if-the-robot-is-in-a-different-coordinate-frame)
+  - [Example: Python server](#example-python-server)
+  - [Example: ROS 2](#example-ros-2)
+  - [In-page API (no server needed)](#in-page-api-no-server-needed)
+  - [Troubleshooting](#troubleshooting)
+- [MuJoCo](#mujoco)
+  - [Parameters](#parameters)
+  - [ROS Package](#ros-package)
+    - [Wrist Position as Target Node](#wrist-position-as-target-node)
+  - [Landmark Marker Node](#landmark-marker-node)
+  - [Landmark Processor Node](#landmark-processor-node)
+  - [Keyboard Servo Control Node](#keyboard-servo-control-node)
+    - [Hand Tracking Launch](#hand-tracking-launch)
+  - [ROS2 Custom Massage](#ros2-custom-massage)
+    - [BodyLandmark.msg](#bodylandmarkmsg)
+    - [HandLandmark.msg](#handlandmarkmsg)
+    - [LandmarkMsg.msg](#landmarkmsgmsg)
+
+# Multiple Cameras 
+## Calibration
+
+<video src="https://github.com/user-attachments/assets/de20feeb-2ce3-430d-ac8c-82ce46a0de1d" controls width="100%"></video>
+
+## 3D Pose Estimation
+
+<video src="https://github.com/user-attachments/assets/ae660faf-dc3a-4f39-8703-ab96e040f49f" controls width="100%"></video>
 
 
-# Hand & Body Tracker
+# Web Based
 
 Web app that takes a camera feed (or a video file), detects hands + upper body via
 MediaPipe, and pushes a JSON frame over WebSocket every ~33 ms. Intended for
 teleoperating a robot arm in real time.
 
-## Demo
-
 <video src="https://github.com/user-attachments/assets/14bf5437-a007-4f30-be92-aae054092e56" controls width="100%"></video>
-
-## ROS Demo
-
-<video src="https://github.com/user-attachments/assets/69ce3621-14c9-4a60-9063-0dc903a5dc13" controls width="100%"></video>
-
-<video src="https://github.com/user-attachments/assets/dd417593-5118-4d7c-b3a1-64e6295da1a3" controls width="100%"></video>
-
-## Pure Python MuJoCo Demo
-<video src="https://github.com/user-attachments/assets/0d1b37a0-e36c-4e8d-8137-c4bc659694c4" controls width="100%"></video>
-
-<!-- <video src="https://github.com/user-attachments/assets/2de7e4b3-d723-46cf-aba5-8f21a8e20cff" controls width="100%"></video> -->
-
-<video src="https://github.com/user-attachments/assets/b6f64c26-bcda-4827-a561-64c2dc341950" controls width="100%"></video>
-
-<!-- <video src="https://github.com/user-attachments/assets/f8fc9c93-b83b-4234-adb6-ef90d2820a60" controls width="100%"></video> -->
-
-<!-- <video src="https://github.com/user-attachments/assets/c2e4ca28-3ccf-48df-9306-74321c002a12" controls width="100%"></video> -->
-
-<video src="https://github.com/user-attachments/assets/453b2586-dbfd-4d56-b10e-6199750684b2" controls width="100%"></video>
 
 ## Requirements
 
@@ -35,9 +53,6 @@ teleoperating a robot arm in real time.
 - A modern browser: Chrome / Edge / Firefox (latest)
 - A webcam or a video file
 
-## Running
-
-### Web Based
 ```bash
 npm install
 npm run dev        # → http://localhost:5173
@@ -45,30 +60,7 @@ npm run dev        # → http://localhost:5173
 
 For a production build: `npm run build` (output in `dist/`).
 
-### Python Landmarks
-
-```bash
-# Clone with submodules
-git clone --recurse-submodules https://github.com/obotx/robot-teleoperation.git
-
-cd robot-teleoperation
-
-# Install dependencies
-uv sync
-
-# Run camera calibration (optional)
-uv run src/camera_calibration/capture_calibrate.py
-
-### MEDIAPIPE ###
-
-# Run camera publisher
-uv run python src/modules/image_publisher.py
-
-# Publish landmarks
-uv run src/modules/tracking_publisher.py --width 1920 --height 1080 --use-bpf
-```
-
-## Calibration
+## Parametes
 
 Three fields at the top of the page. They persist in `localStorage`.
 
@@ -168,7 +160,6 @@ doesn't receive.
   }
 }
 ```
-
 ### Things worth knowing
 
 1. Everything is in **centimetres** in camera frame. Multiply by 0.01 to get metres.
@@ -274,6 +265,7 @@ const latest = window.__handRobotData;
 | Gesture flickers | Pose is borderline | Hold a clearer GRAB/OPEN/POINT/PEACE position |
 | Depth jumps around | FOV or hand size wrong | Re-check 30 cm ruler + measure your hand |
 
+<!--
 ## Structure
 
 ```
@@ -290,8 +282,43 @@ const latest = window.__handRobotData;
         ├── package-lock.json
         └── v1
 ```
+-->
 
-## Pure Python MuJoCo 
+## MuJoCo 
+
+<video src="https://github.com/user-attachments/assets/0d1b37a0-e36c-4e8d-8137-c4bc659694c4" controls width="100%"></video>
+
+<!-- <video src="https://github.com/user-attachments/assets/2de7e4b3-d723-46cf-aba5-8f21a8e20cff" controls width="100%"></video> -->
+
+<video src="https://github.com/user-attachments/assets/b6f64c26-bcda-4827-a561-64c2dc341950" controls width="100%"></video>
+
+<!-- <video src="https://github.com/user-attachments/assets/f8fc9c93-b83b-4234-adb6-ef90d2820a60" controls width="100%"></video> -->
+
+<!-- <video src="https://github.com/user-attachments/assets/c2e4ca28-3ccf-48df-9306-74321c002a12" controls width="100%"></video> -->
+
+<video src="https://github.com/user-attachments/assets/453b2586-dbfd-4d56-b10e-6199750684b2" controls width="100%"></video>
+
+```bash
+# Clone with submodules
+git clone --recurse-submodules https://github.com/obotx/robot-teleoperation.git
+
+cd robot-teleoperation
+
+# Install dependencies
+uv sync
+
+# Run camera calibration (optional)
+uv run src/camera_calibration/capture_calibrate.py
+
+### MEDIAPIPE ###
+
+# Run camera publisher
+uv run python src/modules/image_publisher.py
+
+# Publish landmarks
+uv run src/modules/tracking_publisher.py --width 1920 --height 1080 --use-bpf
+```
+
 
 This demo connects the browser-based hand tracker directly to a MuJoCo simulation
 
@@ -333,6 +360,12 @@ python landmark_processor.py --mode ws \
 
 
 ## ROS Package 
+
+<video src="https://github.com/user-attachments/assets/69ce3621-14c9-4a60-9063-0dc903a5dc13" controls width="100%"></video>
+
+<video src="https://github.com/user-attachments/assets/dd417593-5118-4d7c-b3a1-64e6295da1a3" controls width="100%"></video>
+
+
 This package works together with the '[ROS 2 ObotX Mobile Manipulator](https://github.com/obotx/mobile-manipulator)'.
 
 ### Wrist Position as Target Node 
