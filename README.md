@@ -1,7 +1,7 @@
 # Robot Teleoperation
 
-This repository explores multiple approaches to teleoperating a robot arm using human hand and body tracking. A camera (or webcam/video feed) captures hand and upper-body movement, which is processed through MediaPipe to extract 3D hand poses, gestures, and body landmarks. That data is streamed in real time — over WebSocket — to drive a robot end-effector, whether in simulation (MuJoCo, Gazebo), visualized in RViz, or controlled through a ROS 2 package built for the ObotX dual-arm mobile manipulator.
-The project is organized into a few interchangeable pieces: a **multi-camera calibration and 3D pose estimation** setup for triangulating hand/body position from several viewpoints, a **web-based tracker** (browser + MediaPipe) that streams JSON landmark frames over WebSocket, and a **ROS 2 package** that consumes those frames to drive real or simulated robot arms, complete with keyboard servo control, RViz visualization, and custom message types for hand/body landmarks.
+A collection of approaches for teleoperating robot arms using human motion.
+The project uses cameras to track human hands and body movement, then streams the tracking data to a robot in real time.
 
 # Table of Contents
 
@@ -36,7 +36,10 @@ The project is organized into a few interchangeable pieces: a **multi-camera cal
 
 # Multiple Cameras
 
-This module reconstructs 3D hand/body pose from two or more synchronized webcams instead of a single monocular feed. It has two stages: **calibration** (`record_calibration.py`) records synchronized footage of a Charuco board from all cameras and runs `caliscope` to solve each camera's intrinsics and their relative extrinsics, producing a `camera_array_aniposelib.toml`. **3D pose estimation** (`online.py`) then loads that camera array plus an RTMPose ONNX model to detect 133 whole-body keypoints per camera in real time and triangulate them into 3D world coordinates, viewable live and optionally recorded to disk.
+This module reconstructs 3D hand/body pose from two or more synchronized webcams instead of a single monocular feed.
+It has two stages:
+**calibration** (`record_calibration.py`) records synchronized footage of a Charuco board from all cameras and runs `caliscope` to solve each camera's intrinsics and their relative extrinsics.
+**3D pose estimation** (`online.py`) then loads that camera array plus an RTMPose ONNX model to detect 133 whole-body keypoints per camera in real time and triangulate them into 3D world coordinates, viewable live and optionally recorded to disk.
 
 ## Calibration
 
