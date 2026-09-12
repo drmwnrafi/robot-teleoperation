@@ -1,11 +1,16 @@
 # robot-teleoperation
 # Robot Teleoperation
 
-## Table of Contents
+This repository explores multiple approaches to teleoperating a robot arm using human hand and body tracking. A camera (or webcam/video feed) captures hand and upper-body movement, which is processed through MediaPipe to extract 3D hand poses, gestures, and body landmarks. That data is streamed in real time — over WebSocket — to drive a robot end-effector, whether in simulation (MuJoCo, Gazebo), visualized in RViz, or controlled through a ROS 2 package built for the ObotX dual-arm mobile manipulator.
+The project is organized into a few interchangeable pieces: a **multi-camera calibration and 3D pose estimation** setup for triangulating hand/body position from several viewpoints, a **web-based tracker** (browser + MediaPipe) that streams JSON landmark frames over WebSocket, and a **ROS 2 package** that consumes those frames to drive real or simulated robot arms, complete with keyboard servo control, RViz visualization, and custom message types for hand/body landmarks.
+
+# Table of Contents
 
 - [Multiple Cameras](#multiple-cameras)
   - [Calibration](#calibration)
   - [3D Pose Estimation](#3d-pose-estimation)
+    - [Stream-mode](#stream-mode)
+    - [Playback-mode](#playback-mode)
 - [Web Based](#web-based)
   - [Requirements](#requirements)
   - [Parametes](#parametes)
@@ -19,27 +24,97 @@
   - [Troubleshooting](#troubleshooting)
 - [MuJoCo](#mujoco)
   - [Parameters](#parameters)
-  - [ROS Package](#ros-package)
-    - [Wrist Position as Target Node](#wrist-position-as-target-node)
+- [ROS Package](#ros-package)
+  - [Wrist Position as Target Node](#wrist-position-as-target-node)
   - [Landmark Marker Node](#landmark-marker-node)
   - [Landmark Processor Node](#landmark-processor-node)
   - [Keyboard Servo Control Node](#keyboard-servo-control-node)
-    - [Hand Tracking Launch](#hand-tracking-launch)
+  - [Hand Tracking Launch](#hand-tracking-launch)
   - [ROS2 Custom Massage](#ros2-custom-massage)
     - [BodyLandmark.msg](#bodylandmarkmsg)
     - [HandLandmark.msg](#handlandmarkmsg)
     - [LandmarkMsg.msg](#landmarkmsgmsg)
 
 # Multiple Cameras
+
+This module reconstructs 3D hand/body pose from two or more synchronized webcams instead of a single monocular feed. It has two stages: **calibration** (`record_calibration.py`) records synchronized footage of a Charuco board from all cameras and runs `caliscope` to solve each camera's intrinsics and their relative extrinsics, producing a `camera_array_aniposelib.toml`. **3D pose estimation** (`online.py`) then loads that camera array plus an RTMPose ONNX model to detect 133 whole-body keypoints per camera in real time and triangulate them into 3D world coordinates, viewable live and optionally recorded to disk.
+
+>>>>>>> 758e71c (refactor: multi camera estimation codes)
 ## Calibration
 
 <video src="https://github.com/user-attachments/assets/de20feeb-2ce3-430d-ac8c-82ce46a0de1d" controls width="100%"></video>
+
+`record_calibration.py` runs a two-phase pipeline: it first records a synchronized session from the given camera indices, then automatically runs intrinsic + extrinsic calibration on that footage using `caliscope` (a Charuco board must be visible in all cameras during recording).
+
+```bash
+python record_calibration.py 0 1 --width 2560 --height 1440 --frame-step 5
+```
+
+| Argument | Description |
+|----------|-------------|
+| `cameras` | Camera indices to record from (e.g. `0 1 2`), positional, one or more |
+| `--width` | Target capture width (default: 2560) |
+| `--height` | Target capture height (default: 1440) |
+| `--frame-step` | Frame skip when extracting calibration points from the recording (default: 5) |
+
+**Output** — written to `outputs/<N>cam_<timestamp>/`:
+- The raw per-camera recordings
+- `capture_volume/` — calibration working data
+- `camera_array_aniposelib.toml` — the solved camera array (intrinsics + extrinsics), consumed by the pose estimation stage below
+
+Requires `caliscope` installed and a Charuco board clearly visible to every camera during recording; failures are usually one of those two.
 
 ## 3D Pose Estimation
 
 <video src="https://github.com/user-attachments/assets/ae660faf-dc3a-4f39-8703-ab96e040f49f" controls width="100%"></video>
 
->>>>>>> dbedc43 (docs: refactor and add multi cameras videos)
+
+### Stream-mode
+
+`online.py` performs live multi-camera 3D pose tracking: it runs an RTMPose ONNX model (133-keypoint COCO WholeBody) on each camera's feed, then triangulates the 2D detections into 3D world points using the calibrated camera array from the step above.
+
+```bash
+python online.py 0 1 \
+    --camera-array outputs/2cam_20250101_120000/camera_array_aniposelib.toml \
+    --model models/dwpose_l_coco_wholebody_384x288.onnx \
+    --conf 0.5 \
+    --save
+```
+
+| Argument | Description |
+|----------|-------------|
+| `cams` | Camera indices to track from (positional, minimum 2 required for triangulation) |
+| `--camera-array` | Path to the `camera_array.toml` produced by calibration (required) |
+| `--model` | Path to the RTMPose ONNX model (default: `models/dwpose_l_coco_wholebody_384x288.onnx`) |
+| `--output` | Base output directory (default: `outputs`) |
+| `--save` | Save per-camera video feeds as MP4 plus an `info.toml` session summary |
+| `--conf` | Confidence threshold for keypoints (default: 0.5) |
+
+The pipeline detects keypoints per camera in a background worker thread (so tracking doesn't block frame capture/display), triangulates them into 3D via the camera array, and shows the result live in a viewer window. Each camera's actual resolution is checked against what it was calibrated at; a mismatch prints a warning since triangulation accuracy depends on that match.
+
+When `--save` is used, it writes `cam_<idx>.mp4` per camera plus an `info.toml` recording the session config, per-camera resolution/FPS/match status, model details, and total frame count.
+
+### Playback-mode
+
+```bash
+python playback.py \
+    --videos outputs/2cam_20250101_120000/cam_0.mp4 outputs/2cam_20250101_120000/cam_1.mp4 \
+    --camera-array outputs/2cam_20250101_120000/camera_array_aniposelib.toml \
+    --model models/rtmpose_l_coco_wholebody.onnx \
+    --conf 0.3 \
+    --speed 1.0
+```
+
+| Argument | Description |
+|----------|-------------|
+| `--videos` | Video files to replay, one per camera, in the same order as the camera array (required) |
+| `--camera-array` | Path to `camera_array.toml` (required) |
+| `--model` | Path to the RTMPose ONNX model (default: `models/rtmpose_l_coco_wholebody.onnx`) |
+| `--conf` | Confidence threshold (default: 0.3) |
+| `--speed` | Playback speed multiplier — e.g. `2.0` for 2x, `0.5` for half speed (default: 1.0) |
+
+Playback throttles frame reads to match the source video's FPS scaled by `--speed`, runs the same background-thread detection + triangulation as live tracking, and shows the result in the same 3D viewer. It stops automatically at end-of-stream, or on `ESC`.
+>>>>>>> 758e71c (refactor: multi camera estimation codes)
 
 # Web Based
 
@@ -287,6 +362,8 @@ const latest = window.__handRobotData;
 -->
 
 ## MuJoCo
+# MuJoCo
+>>>>>>> 758e71c (refactor: multi camera estimation codes)
 
 <video src="https://github.com/user-attachments/assets/0d1b37a0-e36c-4e8d-8137-c4bc659694c4" controls width="100%"></video>
 
@@ -343,7 +420,7 @@ Start the landmark processor:
 python landmark_processor.py --mode ws --host 0.0.0.0 --port 9090
 ```
 
-### Parameters
+## Parameters
 
 ```bash
 python landmark_processor.py --mode ws \
@@ -364,6 +441,8 @@ python landmark_processor.py --mode ws \
 
 ## ROS Package
 ## ROS Package
+# ROS Package
+>>>>>>> 758e71c (refactor: multi camera estimation codes)
 
 <video src="https://github.com/user-attachments/assets/69ce3621-14c9-4a60-9063-0dc903a5dc13" controls width="100%"></video>
 
@@ -374,6 +453,7 @@ python landmark_processor.py --mode ws \
 This package works together with the '[ROS 2 ObotX Mobile Manipulator](https://github.com/obotx/mobile-manipulator)'.
 
 ### Wrist Position as Target Node
+## Wrist Position as Target Node
 Run the hand pose tracker:
 
 ```bash
@@ -532,6 +612,3 @@ string[] landmark_names
 | `right_hand`       | Processed right hand data.          |
 | `body_landmarks`   | Array of body landmarks.            |
 | `landmark_names`   | List of available landmark names.   |
-
-
->>>>>>> 897b1b9 (feat: add calibration)

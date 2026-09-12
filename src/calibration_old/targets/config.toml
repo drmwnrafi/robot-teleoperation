@@ -1,3 +1,0 @@
-intrinsic_target_type = "charuco"
-extrinsic_target_type = "charuco"
-extrinsic_charuco_same_as_intrinsic = true
