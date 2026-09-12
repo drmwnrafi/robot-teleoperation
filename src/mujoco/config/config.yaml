@@ -1,0 +1,33 @@
+# --- Camera & Display ---
+image_topic: "camera_image"
+calibration: null
+width: 1920
+height: 1080
+window_width: 960
+window_height: 540
+max_fps: 30.0
+use_gpu: true
+
+# MediaPipe model files
+pose_model: "src/models/pose_landmarker_full.task"
+hand_model: "src/models/hand_landmarker_full.task"
+
+# --- MediaPipe Confidence & Smoothing ---
+smoothing: 0.10
+detect_conf_hand: 0.5
+track_conf_hand: 0.5
+detect_conf_pose: 0.5
+track_conf_pose: 0.5
+
+# --- Features ---
+use_bpf: true          # Body Pre-Focusing
+hand_padding: 1.0      # Padding factor for hand crop
+show_3d: true          # Enable PyVista 3D visualization
+enhance: false         # Enable software CLAHE and sharpness
+
+# --- [Optional] Human Bone Lengths (in cm) ---
+pelvis_width: 35.0       # Hip width (Left Hip to Right Hip)
+clavicle_length: 42.0    # Shoulder width (Left Shoulder to Right Shoulder)
+humerus_length: 33.5     # Upper arm (Shoulder to Elbow)
+forearm_length: 27.0     # Forearm (Elbow to Wrist)
+torso_height: 50.0       # Torso height (Left Hip to Left Shoulder AND Right Hip to Right Shoulder)
