@@ -38,20 +38,28 @@ The project uses cameras to track human hands and body movement, then streams th
 # Multiple Cameras
 
 This module reconstructs 3D hand/body pose from two or more synchronized webcams instead of a single monocular feed.
-It has two stages:
-**calibration** (`record_calibration.py`) records synchronized footage of a Charuco board from all cameras and runs `caliscope` to solve each camera's intrinsics and their relative extrinsics.
-**3D pose estimation** (`online.py`) then loads that camera array plus an RTMPose ONNX model to detect 133 whole-body keypoints per camera in real time and triangulate them into 3D world coordinates, viewable live and optionally recorded to disk.
+
+```bash
+uv sync # for setup the environtment
+```
 
 >>>>>>> 758e71c (refactor: multi camera estimation codes)
 ## Calibration
 
 <video src="https://github.com/user-attachments/assets/de20feeb-2ce3-430d-ac8c-82ce46a0de1d" controls width="100%"></video>
 
-`record_calibration.py` runs a two-phase pipeline: it first records a synchronized session from the given camera indices, then automatically runs intrinsic + extrinsic calibration on that footage using `caliscope` (a Charuco board must be visible in all cameras during recording).
+`record_calibration.py` records a synchronized session and automatically performs intrinsic and extrinsic calibration
+
+Print the [Charuco board](src/multi_cams/board/charuco_board.png) on A4 paper and keep it visible in all cameras.
 
 ```bash
-python record_calibration.py 0 1 --width 2560 --height 1440 --frame-step 5
+uv run python record_calibration.py 0 1 --width 2560 --height 1440 --frame-step 5
 ```
+
+When the camera window opens:
+
+- Press `R` to start recording after the 3-second countdown
+- Press `S` to stop recording and start calibration
 
 | Argument | Description |
 |----------|-------------|
@@ -65,19 +73,20 @@ python record_calibration.py 0 1 --width 2560 --height 1440 --frame-step 5
 - `capture_volume/` — calibration working data
 - `camera_array_aniposelib.toml` — the solved camera array (intrinsics + extrinsics), consumed by the pose estimation stage below
 
-Requires `caliscope` installed and a Charuco board clearly visible to every camera during recording; failures are usually one of those two.
-
 ## 3D Pose Estimation
 
 <video src="https://github.com/user-attachments/assets/ae660faf-dc3a-4f39-8703-ab96e040f49f" controls width="100%"></video>
 
 
 ### Stream-mode
+### Stream Mode
 
-`online.py` performs live multi-camera 3D pose tracking: it runs an RTMPose ONNX model (133-keypoint COCO WholeBody) on each camera's feed, then triangulates the 2D detections into 3D world points using the calibrated camera array from the step above.
+The pipeline detects 2D keypoints in background workers, triangulates them into 3D using the calibrated camera array, and displays the result live.
+
+`online.py` performs real-time multi-camera 3D pose tracking using RTMPose and the calibrated camera array
 
 ```bash
-python online.py 0 1 \
+uv run python online.py 0 1 \
     --camera-array outputs/2cam_20250101_120000/camera_array_aniposelib.toml \
     --model models/dwpose_l_coco_wholebody_384x288.onnx \
     --conf 0.5 \
@@ -93,14 +102,19 @@ python online.py 0 1 \
 | `--save` | Save per-camera video feeds as MP4 plus an `info.toml` session summary |
 | `--conf` | Confidence threshold for keypoints (default: 0.5) |
 
-The pipeline detects keypoints per camera in a background worker thread (so tracking doesn't block frame capture/display), triangulates them into 3D via the camera array, and shows the result live in a viewer window. Each camera's actual resolution is checked against what it was calibrated at; a mismatch prints a warning since triangulation accuracy depends on that match.
+Camera resolution is checked against the calibration resolution. A warning is shown if they do not match.
 
-When `--save` is used, it writes `cam_<idx>.mp4` per camera plus an `info.toml` recording the session config, per-camera resolution/FPS/match status, model details, and total frame count.
+With `--save`, it also saves:
+
+- `cam_<idx>.mp4` — per-camera recordings
+- `info.toml` — session configuration, camera details, model info, and frame count
 
 ### Playback-mode
 
+`playback.py` replays recorded multi-camera videos using the same 3D pose tracking and triangulation pipeline as Stream Mode.
+
 ```bash
-python playback.py \
+uv run python playback.py \
     --videos outputs/2cam_20250101_120000/cam_0.mp4 outputs/2cam_20250101_120000/cam_1.mp4 \
     --camera-array outputs/2cam_20250101_120000/camera_array_aniposelib.toml \
     --model models/rtmpose_l_coco_wholebody.onnx \
@@ -117,7 +131,8 @@ python playback.py \
 | `--speed` | Playback speed multiplier — e.g. `2.0` for 2x, `0.5` for half speed (default: 1.0) |
 
 Playback throttles frame reads to match the source video's FPS scaled by `--speed`, runs the same background-thread detection + triangulation as live tracking, and shows the result in the same 3D viewer. It stops automatically at end-of-stream, or on `ESC`.
->>>>>>> 758e71c (refactor: multi camera estimation codes)
+
+Playback runs at the source FPS scaled by `--speed` and stops at the end of the videos or when **ESC** is pressed.
 
 # Web Based
 
