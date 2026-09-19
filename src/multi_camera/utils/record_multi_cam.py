@@ -111,8 +111,6 @@ def record_session(cam_indices, recordings_dir, width=None, height=None):
     recorded_files = {}
     WINDOW_NAME = "Multi-Cam Viewer"
 
-    # --- Window sizing: divide full screen width across the grid columns, then
-    #     derive each tile's height from the camera's own native aspect ratio ---
     num_cams = len(cams)
     grid_cols = 2 if num_cams >= 2 else 1
     grid_rows = math.ceil(num_cams / 2)
@@ -123,11 +121,9 @@ def record_session(cam_indices, recordings_dir, width=None, height=None):
         screen_w = _root.winfo_screenwidth()
         _root.destroy()
     except Exception:
-        screen_w = 1920  # fallback if tkinter isn't available
+        screen_w = 1920
 
     PREVIEW_W = screen_w // grid_cols
-    # Use the first camera's native aspect ratio (cameras are assumed to share
-    # the same resolution/aspect ratio; adjust here if yours differ per-cam).
     cam_aspect = cam_info[0]["h"] / cam_info[0]["w"]
     PREVIEW_H = int(PREVIEW_W * cam_aspect)
 

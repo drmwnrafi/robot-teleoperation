@@ -26,13 +26,6 @@ VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}
 
 
 def run_calibration(folder: Path, frame_step: int = 5):
-    """
-    Runs intrinsic and extrinsic calibration on all videos found in the given folder.
-    Calibration output is saved directly into the same folder.
-
-    :param folder: Path to the folder containing calibration videos.
-    :param frame_step: Number of frames to skip during point extraction.
-    """
     folder = folder.resolve()
 
     if not folder.is_dir():

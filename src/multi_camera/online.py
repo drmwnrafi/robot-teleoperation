@@ -21,6 +21,7 @@ from caliscope.cameras.camera_array import CameraArray
 from caliscope.core.point_data import ImagePoints
 
 from utils.viewer import PoseViewer
+from utils.babyros_publisher import BabyROSPublisher
 
 console = Console()
 
@@ -258,14 +259,28 @@ def main():
             out_path = args.output / f"cam_{idx}.mp4"
             writers.append(ThreadedVideoWriter(out_path, fourcc, fps, (w, h)))
 
+    widths = [int(c.get(cv2.CAP_PROP_FRAME_WIDTH)) for c in caps]
+    heights = [int(c.get(cv2.CAP_PROP_FRAME_HEIGHT)) for c in caps]
     viewer = PoseViewer(
-        window_name="Caliscope 3D Viewer",
-        base_widths=[s[0] for s in actual_sizes],
-        base_heights=[s[1] for s in actual_sizes],
-        view_3d_base_width=actual_sizes[0][1],
+        window_name="Playback 3D Viewer",
+        base_widths=widths,
+        base_heights=heights,
+        view_3d_base_width=heights[0],
         confidence_threshold=args.conf,
-        skeleton_format="coco_wholebody_133"
+        skeleton_format="coco_wholebody_133",
+        debug=False,
+        initial_view_state = {
+            "rotation_matrix": [
+                [0.418491, 0.798565, 0.432619],
+                [0.854092, -0.184047, -0.486470],
+                [-0.308856, 0.573080, -0.759070]
+            ],
+            "zoom": 3.4100,
+            "pan_offset": [165.00, 192.00],
+        }
     )
+
+    ros_publisher = BabyROSPublisher()
 
     def make_frame_image_points(frame_index, packets):
         rows = []
@@ -332,6 +347,11 @@ def main():
 
             res_idx, packets, xyz_df = last_result
 
+            ros_publisher.publish_frame(
+                frame_index=frame_index,
+                xyz_df=xyz_df
+            )
+
             if args.save:
                 for i, writer in enumerate(writers):
                     writer.write(frames[i])
@@ -355,6 +375,7 @@ def main():
         writer.release()
 
     viewer.destroy()
+    ros_publisher.cleanup()
     console.print("  [dim]Cameras, writers, and viewer released.[/dim]")
 
     if args.save:

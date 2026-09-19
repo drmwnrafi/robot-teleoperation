@@ -12,10 +12,15 @@ from utils.skeleton import SKELETON_FORMATS
 class PoseViewer:
     def __init__(self, window_name: str, base_widths: List[int], base_heights: List[int],
                  view_3d_base_width: int, confidence_threshold: float = 0.3,
-                 skeleton_format: str = "coco_wholebody_133"):
+                 skeleton_format: str = "coco_wholebody_133",
+                 debug: bool = False,
+                 initial_view_state: Optional[Dict] = None,
+                 landmark_scale_2d: float = 2.5,
+                 landmark_scale_3d: float = 0.9):
 
         self.window_name = window_name
         self.confidence_threshold = confidence_threshold
+        self.debug = debug
 
         if skeleton_format not in SKELETON_FORMATS:
             raise ValueError(f"Unknown skeleton format: {skeleton_format}. Choose from {list(SKELETON_FORMATS.keys())}")
@@ -27,13 +32,33 @@ class PoseViewer:
             base_widths, base_heights, view_3d_base_width
         )
 
-        self._default_rotation_matrix = self._yaw_pitch_roll_matrix(
+        default_rot = self._yaw_pitch_roll_matrix(
             np.deg2rad(0.0),      # yaw (ψ)
             np.deg2rad(0.0),      # pitch (θ)
-            np.deg2rad(90.0)     # roll (φ)
+            np.deg2rad(0.0)       # roll (φ)
         )
-        self.rotation_matrix = self._default_rotation_matrix.copy()
-        self.zoom = 1.0
+        default_zoom = 3.0
+        default_pan = np.array([0.0, 0.0])
+
+        if initial_view_state is not None:
+            try:
+                default_rot = np.array(initial_view_state["rotation_matrix"], dtype=float)
+            except KeyError:
+                pass
+            default_zoom = float(initial_view_state.get("zoom", default_zoom))
+            pan = initial_view_state.get("pan_offset", default_pan)
+            default_pan = np.array(pan, dtype=float)
+
+        self._default_rotation_matrix = default_rot.copy()
+        self._default_zoom = default_zoom
+        self._default_pan = default_pan.copy()
+
+        self.rotation_matrix = default_rot.copy()
+        self.zoom = default_zoom
+        self.pan_offset = default_pan.copy()
+
+        self.is_panning = False
+        self.last_pan_pos = (0, 0)
 
         self.is_dragging = False
         self.is_zooming = False
@@ -45,6 +70,9 @@ class PoseViewer:
         self.depth_cue_enabled = True
         self.show_axis_gizmo = True
         self.show_ghost_hypotheses = False
+
+        self.landmark_scale_2d = landmark_scale_2d
+        self.landmark_scale_3d = landmark_scale_3d
 
         self._gizmo_hit_points: Dict[str, Tuple[int, int]] = {}
         self._gizmo_hit_radius = 12
@@ -70,7 +98,6 @@ class PoseViewer:
         self.root_trail: List[np.ndarray] = []  # list of raw (unrotated, normalized) 3D points
 
         sep_width = 5
-        # Calculate the starting X coordinate of the 3D pane based on equal grid widths
         self.offset_x_3d = (len(base_widths) * self.target_widths[0]) + (len(base_widths) * sep_width)
 
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
@@ -85,13 +112,15 @@ class PoseViewer:
             Panel(
                 "[bold white]Launch viewer ...[/bold white]\n\n"
                 " [bold]3D view controls:[/bold]\n"
-                "  Left drag on 3D pane      - Free trackball rotate (all axes, incl. roll)\n"
+                "  Left drag on 3D pane      - Free trackball rotate (follows cursor)\n"
+                "  Middle drag on 3D pane    - Pan view (X/Y translation)\n"
                 "  Right drag on 3D pane     - Zoom\n"
                 "  Drag a gizmo axis dot     - Rotate around JUST that axis (X/Y/Z)\n"
                 "  Click a gizmo axis dot    - Snap to that axis's canonical view\n"
-                "  R - Reset view\n"
+                "  R - Reset view (incl. pan & zoom)\n"
                 "  D - Toggle depth cueing\n"
-                "  G - Toggle ghost TTA hypotheses\n\n"
+                "  G - Toggle ghost TTA hypotheses\n"
+                "  P - Print current view state (for reuse via initial_view_state)\n\n"
                 " [dim]Press ESC to exit[/dim]",
                 title="[bold cyan] VIEWER [/bold cyan]",
                 border_style="cyan",
@@ -117,14 +146,12 @@ class PoseViewer:
         total_sep_width = (num_panels - 1) * sep_width
         available_width = self.screen_width - total_sep_width
 
-        # Each grid slot gets equal width and full half-screen height
         grid_w = max(1, available_width // num_panels)
         grid_h = max(1, self.screen_height // 2)
 
         target_widths = [grid_w] * num_panels
         target_heights = [grid_h] * num_panels
 
-        # Return a dummy scale (1.0) since per-panel aspect-ratio scaling is now handled in show()
         return 1.0, grid_h, target_widths, target_heights
 
     def _hit_test_gizmo(self, local_x: int, local_y: int) -> Optional[str]:
@@ -133,9 +160,42 @@ class PoseViewer:
                 return label
         return None
 
+    def _print_debug_state(self):
+        if not self.debug:
+            return
+        rows = ",\n        ".join(
+            "[" + ", ".join(f"{v:.6f}" for v in row) + "]" for row in self.rotation_matrix
+        )
+        print("\n--- viewer debug state (paste into initial_view_state) ---")
+        print("initial_view_state = {")
+        print(f"    \"rotation_matrix\": [\n        {rows}\n    ],")
+        print(f"    \"zoom\": {self.zoom:.4f},")
+        print(f"    \"pan_offset\": [{self.pan_offset[0]:.2f}, {self.pan_offset[1]:.2f}],")
+        print("}")
+        print("-----------------------------------------------------------\n")
+
     def _mouse_callback(self, event, x, y, flags, param):
         view_w = self.target_widths[-1]
         in_pane = self.offset_x_3d <= x < self.offset_x_3d + view_w
+
+        # --- MIDDLE CLICK PANNING ---
+        if event == cv2.EVENT_MBUTTONDOWN and in_pane:
+            self.is_panning = True
+            self.last_pan_pos = (x, y)
+            return
+
+        if event == cv2.EVENT_MBUTTONUP:
+            self.is_panning = False
+            self._print_debug_state()
+            return
+
+        if event == cv2.EVENT_MOUSEMOVE and self.is_panning:
+            dx = x - self.last_pan_pos[0]
+            dy = y - self.last_pan_pos[1]
+            self.pan_offset[0] += dx
+            self.pan_offset[1] += dy
+            self.last_pan_pos = (x, y)
+            return
 
         if event == cv2.EVENT_LBUTTONDOWN and in_pane:
             local_x, local_y = x - self.offset_x_3d, y
@@ -174,6 +234,7 @@ class PoseViewer:
             self._active_gizmo_label = None
             self._active_gizmo_axis = None
             self._active_gizmo_dragged = False
+            self._print_debug_state()
             return
 
         if in_pane:
@@ -183,13 +244,16 @@ class PoseViewer:
                 v0 = self._arcball_start_vec
                 dot = float(np.clip(np.dot(v0, v1), -1.0, 1.0))
                 angle = np.arccos(dot)
-                axis = np.cross(v0, v1)
+
+                axis = np.cross(v1, v0)
+
                 delta_rot = self._rotation_about_axis(axis, angle)
                 self.rotation_matrix = delta_rot @ self._arcball_start_matrix
             elif event == cv2.EVENT_LBUTTONUP:
                 self.is_dragging = False
                 self._arcball_start_vec = None
                 self._arcball_start_matrix = None
+                self._print_debug_state()
 
             elif event == cv2.EVENT_RBUTTONDOWN:
                 self.is_zooming = True
@@ -201,6 +265,7 @@ class PoseViewer:
                 self.last_zoom_y = y
             elif event == cv2.EVENT_RBUTTONUP:
                 self.is_zooming = False
+                self._print_debug_state()
 
     def _rotate_local(self, axis: np.ndarray, angle: float):
         self.rotation_matrix = self.rotation_matrix @ self._rotation_about_axis(axis, angle)
@@ -257,7 +322,8 @@ class PoseViewer:
 
     def reset_view(self):
         self.rotation_matrix = self._default_rotation_matrix.copy()
-        self.zoom = 1.0
+        self.zoom = self._default_zoom
+        self.pan_offset = self._default_pan.copy()
 
     def _get_rotation_matrix(self):
         return self.rotation_matrix
@@ -307,8 +373,10 @@ class PoseViewer:
         z = np.maximum(pts_rot[:, 2] + focal, 0.1)
         norm_x = pts_rot[:, 0] / z
         norm_y = pts_rot[:, 1] / z
-        proj_x = (norm_x * self.zoom) * (w / 2) + w / 2
-        proj_y = (norm_y * self.zoom) * (h / 2) + h / 2
+
+        proj_x = (norm_x * self.zoom) * (w / 2) + w / 2 + self.pan_offset[0]
+        proj_y = (norm_y * self.zoom) * (h / 2) + h / 2 + self.pan_offset[1]
+
         return np.stack([proj_x, proj_y], axis=1), z
 
     def _draw_pose_generic(self, output: np.ndarray, kp_map: dict, is_3d: bool = False,
@@ -316,7 +384,7 @@ class PoseViewer:
                             conf_map: Optional[Dict[int, float]] = None,
                             alpha_override: Optional[float] = None,
                             color_override: Optional[Tuple[int, int, int]] = None):
-        scale_factor = 1.5 if is_3d else 1.0
+        scale_factor = self.landmark_scale_3d if is_3d else self.landmark_scale_2d
 
         near, far = None, None
         if depth_map:
@@ -469,20 +537,12 @@ class PoseViewer:
         kp_ids = xyz_df['keypoint_id'].values.astype(int)
         conf_col = xyz_df['confidence'].values if 'confidence' in xyz_df.columns else None
 
-        min_pt, max_pt = np.min(pts, axis=0), np.max(pts, axis=0)
-        extent = np.max(max_pt - min_pt) if np.max(max_pt - min_pt) > 0 else 1.0
-
-        root_matches = np.where(kp_ids == self.root_joint_id)[0]
-        if len(root_matches) > 0:
-            center = pts[root_matches[0]]
-        else:
-            center = (min_pt + max_pt) / 2
-
-        pts_scaled = (pts - center) / extent * 1.5
+        center = np.array([0.0, 0.0, 0.0])
+        fixed_extent = 2.0
+        pts_scaled = (pts - center) / fixed_extent * 1.5
 
         proj_xy, depth_z = self._project_points(pts_scaled, w, h)
         kp_map = {int(kp): (int(x), int(y)) for kp, (x, y) in zip(kp_ids, proj_xy)}
-        kp_map_norm = {int(kp): p for kp, p in zip(kp_ids, pts_scaled)}
         depth_map = {int(kp): float(z) for kp, z in zip(kp_ids, depth_z)} if self.depth_cue_enabled else None
         conf_map = {int(kp): float(c) for kp, c in zip(kp_ids, conf_col)} if conf_col is not None else None
 
@@ -490,7 +550,7 @@ class PoseViewer:
             ghost_colors = [(180, 180, 180), (120, 180, 255), (180, 255, 120)]
             for hi in range(hypotheses.shape[0]):
                 h_pts = hypotheses[hi]
-                h_scaled = (h_pts - center) / extent * 1.5
+                h_scaled = (h_pts - center) / fixed_extent * 1.5
                 h_proj, _ = self._project_points(h_scaled, w, h)
                 h_kp_map = {i: (int(x), int(y)) for i, (x, y) in enumerate(h_proj)}
                 self._draw_pose_generic(canvas, h_kp_map, is_3d=True,
@@ -505,9 +565,16 @@ class PoseViewer:
         if self.show_axis_gizmo:
             self._draw_axis_gizmo(canvas, w, h)
 
+        # Bottom-left: Euler angles
         yaw, pitch, roll = self._get_euler_angles_deg()
         info_text = f"φ : {roll:5.1f}°   θ : {pitch:5.1f}°   ψ : {yaw:5.1f}°"
         canvas = self._draw_unicode_text(canvas, info_text, (15, h-20), font_size=13, color=(220, 220, 220))
+
+        # Bottom-right: Zoom value
+        zoom_text = f"Zoom: {self.zoom:.2f}x"
+        (text_width, _), _ = cv2.getTextSize(zoom_text, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+        cv2.putText(canvas, zoom_text, (w - text_width - 15, h - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (220, 220, 220), 1, cv2.LINE_AA)
+
         return canvas
 
     def show(self, raw_frames: List[np.ndarray], packets: List, xyz_df: Optional[pd.DataFrame], frame_index: int,
@@ -529,7 +596,6 @@ class PoseViewer:
             grid_aspect = grid_w / grid_h
 
             if orig_aspect > grid_aspect:
-                # Camera is wider than grid: fit to width, pad top/bottom
                 target_w = grid_w
                 target_h = max(1, int(grid_w / orig_aspect))
                 resized = cv2.resize(f, (target_w, target_h))
@@ -537,7 +603,6 @@ class PoseViewer:
                 pad_bottom = grid_h - target_h - pad_top
                 padded = cv2.copyMakeBorder(resized, pad_top, pad_bottom, 0, 0, cv2.BORDER_CONSTANT, value=[20, 20, 20])
             else:
-                # Camera is taller than grid: fit to height, pad left/right
                 target_h = grid_h
                 target_w = max(1, int(grid_h * orig_aspect))
                 resized = cv2.resize(f, (target_w, target_h))
@@ -547,7 +612,6 @@ class PoseViewer:
 
             resized_2d.append(padded)
 
-        # 3D view naturally fills its equal-sized grid slot
         view_3d = self._render_3d_view(xyz_df, self.target_widths[-1], self.target_heights[-1], hypotheses=hypotheses)
 
         sep_h = self.target_heights[0] if self.target_heights else self.target_h
@@ -577,6 +641,8 @@ class PoseViewer:
             self.depth_cue_enabled = not self.depth_cue_enabled
         elif key in (ord('g'), ord('G')):
             self.show_ghost_hypotheses = not self.show_ghost_hypotheses
+        elif key in (ord('p'), ord('P')):
+            self._print_debug_state()
 
         return True
 
