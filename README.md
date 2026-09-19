@@ -75,7 +75,9 @@ When the camera window opens:
 
 ## 3D Pose Estimation
 
-<video src="https://github.com/user-attachments/assets/ae660faf-dc3a-4f39-8703-ab96e040f49f" controls width="100%"></video>
+<video src="https://github.com/user-attachments/assets/4cd18b85-0119-457a-a22b-9a4961715fa4" controls width="100%"></video>
+
+<!-- <video src="https://github.com/user-attachments/assets/ae660faf-dc3a-4f39-8703-ab96e040f49f" controls width="100%"></video> -->
 
 
 ### Stream-mode
