@@ -40,10 +40,52 @@ The project uses cameras to track human hands and body movement, then streams th
 This module reconstructs 3D hand/body pose from two or more synchronized webcams instead of a single monocular feed.
 
 ```bash
+cd robot-teleoperation
 uv sync # for setup the environtment
 ```
 
->>>>>>> 758e71c (refactor: multi camera estimation codes)
+## Download ONNX Model
+
+Download and extract the RTMPose ONNX model into the models/ directory.
+
+```bash
+cd multi_cams
+```
+
+#### Windows PowerShell
+
+```bash
+New-Item -ItemType Directory -Force models
+Invoke-WebRequest `
+    -Uri "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-l_simcc-ucoco_dw-ucoco_270e-384x288-2438fd99_20230728.zip" `
+    -OutFile "rtmpose.zip"
+Expand-Archive -Path "rtmpose.zip" -DestinationPath "models" -Force
+Remove-Item "rtmpose.zip"
+```
+
+#### Linux
+
+```bash
+mkdir -p models
+curl -L \
+  "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-l_simcc-ucoco_dw-ucoco_270e-384x288-2438fd99_20230728.zip" \
+  -o /tmp/rtmpose.zip
+unzip -o /tmp/rtmpose.zip -d models
+rm /tmp/rtmpose.zip
+```
+
+#### MacOS
+
+```bash
+mkdir -p models
+curl -L \
+  "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/rtmpose-l_simcc-ucoco_dw-ucoco_270e-384x288-2438fd99_20230728.zip" \
+  -o /tmp/rtmpose.zip
+unzip -o /tmp/rtmpose.zip -d models
+rm /tmp/rtmpose.zip
+```
+
+>>>>>>> 1bd8c9a (docs: add video mujoco with 3d estimation)
 ## Calibration
 
 <video src="https://github.com/user-attachments/assets/de20feeb-2ce3-430d-ac8c-82ce46a0de1d" controls width="100%"></video>
@@ -75,7 +117,9 @@ When the camera window opens:
 
 ## 3D Pose Estimation
 
-<video src="https://github.com/user-attachments/assets/4cd18b85-0119-457a-a22b-9a4961715fa4" controls width="100%"></video>
+<video src="https://github.com/user-attachments/assets/9b21a416-f562-45c4-beeb-0dfbf2389820" controls width="100%"></video>
+
+<!-- <video src="https://github.com/user-attachments/assets/4cd18b85-0119-457a-a22b-9a4961715fa4" controls width="100%"></video> -->
 
 <!-- <video src="https://github.com/user-attachments/assets/ae660faf-dc3a-4f39-8703-ab96e040f49f" controls width="100%"></video> -->
 
@@ -113,7 +157,9 @@ With `--save`, it also saves:
 
 ### Playback-mode
 
-`playback.py` replays recorded multi-camera videos using the same 3D pose tracking and triangulation pipeline as Stream Mode.
+`playback.py` replays recorded multi-camera videos using the same 3D pose tracking and triangulation pipeline as Stream Mode. It can either run the pose model fresh, or replay landmarks recorded from a previous run.
+
+**Option A — explicit videos/camera-array/model:**
 
 ```bash
 uv run python playback.py \
@@ -124,17 +170,40 @@ uv run python playback.py \
     --speed 1.0
 ```
 
+**Option B — session folder (reads `info.toml` for camera array, model, and confidence threshold):**
+
+```bash
+uv run python playback.py \
+    --folder outputs/2cam_20250101_120000 \
+    --speed 1.0
+```
+
+**Option C — replay recorded landmarks only (skips the pose model entirely):**
+
+```bash
+uv run python playback.py \
+    --folder outputs/2cam_20250101_120000 \
+    --xyz
+```
+
+If `--xyz` is passed but no `landmarks_2d.csv` / `landmarks_3d.csv` are found next to the videos, playback falls back to Option A/B behavior and records them for the first time.
+
 | Argument | Description |
 |----------|-------------|
-| `--videos` | Video files to replay, one per camera, in the same order as the camera array (required) |
-| `--camera-array` | Path to `camera_array.toml` (required) |
-| `--model` | Path to the RTMPose ONNX model (default: `models/rtmpose_l_coco_wholebody.onnx`) |
-| `--conf` | Confidence threshold (default: 0.3) |
-| `--speed` | Playback speed multiplier — e.g. `2.0` for 2x, `0.5` for half speed (default: 1.0) |
+| `--folder` | Session folder containing `info.toml` and `cam_*.mp4`. Reads `camera_array_path`, `model_path`, and `confidence_threshold` from `info.toml`. Cannot be combined with `--videos`, `--camera-array`, or `--model` |
+| `--videos` | Video files to replay, one per camera. Requires `--camera-array`; cannot be combined with `--folder` |
+| `--camera-array` | Path to `camera_array.toml` (required with `--videos`) |
+| `--model` | Path to the RTMPose ONNX model (default: `models/rtmpose_l_coco_wholebody.onnx`, used only with `--videos`) |
+| `--conf` | Confidence threshold (default: `0.4`, or the value from `info.toml` when using `--folder`) |
+| `--speed` | Playback speed multiplier — e.g. `2.0` for 2x, `0.5` for half speed (default: `1.0`) |
+| `--xyz` | Skip the pose model and replay previously recorded 2D/3D landmarks from `landmarks_2d.csv` / `landmarks_3d.csv` (found alongside `--folder`, or in the parent folder of `--videos`). Falls back to recording if no landmarks exist yet |
 
 Playback throttles frame reads to match the source video's FPS scaled by `--speed`, runs the same background-thread detection + triangulation as live tracking, and shows the result in the same 3D viewer. It stops automatically at end-of-stream, or on `ESC`.
 
 Playback runs at the source FPS scaled by `--speed` and stops at the end of the videos or when **ESC** is pressed.
+Playback runs at the source FPS scaled by `--speed` and stops at the end of the videos, when **ESC** is pressed, or on keyboard interrupt (Ctrl+C).
+
+When not using `--xyz` playback, 2D keypoints and triangulated 3D landmarks are recorded during the run and saved to `landmarks_2d.csv` and `landmarks_3d.csv` in the session/videos folder on exit.
 
 # Web Based
 
