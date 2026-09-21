@@ -90,7 +90,7 @@ rm /tmp/rtmpose.zip
 
 `record_calibration.py` records a synchronized session and automatically performs intrinsic and extrinsic calibration.
 
-Print the [Charuco board](src/multi_camera/board/charuco_board.png) on A4 paper and keep it visible in all cameras.
+Print the [Charuco board](src/multi_camera/board/charuco_board_invert.png) on A4 paper and keep it visible in all cameras.
 
 ```bash
 uv run python record_calibration.py 0 1 --width 2560 --height 1440 --frame-step 5
